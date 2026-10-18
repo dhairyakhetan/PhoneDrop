@@ -1,12 +1,14 @@
 # PhoneDrop
 
-Send photos, videos and files from your PC to your phone over Wi-Fi. No cables, no cloud, no accounts. On iPhone, one tap saves everything straight to the Photos app, in full quality with dates and locations kept.
+Send photos, videos and files between your Windows PC and your phone over Wi-Fi, both ways. No cables, no cloud, no accounts, and no AirDrop needed: it works with **Android phones and iPhones**. Everything arrives in full quality, with dates and locations kept.
 
 - Drop files onto the PhoneDrop window on your PC, then scan the QR code with your phone.
-- **Save all to Photos** in one tap (in batches of 25), or pick photos with long-press + slide like the Photos app.
-- Big videos work too, with progress, speed and time left for everything that takes a while.
-- Works the other way: send files from your phone to the PC.
-- The PC sees which phone is connected and which files were saved, and can clean up saved files.
+- **Android:** one tap saves everything to the phone (Downloads, shows up in the Gallery). **iPhone:** one tap saves straight to the Photos app.
+- No shared Wi-Fi? Turn on your **phone's hotspot** and connect the PC to it. PhoneDrop notices and updates the QR code by itself.
+- The PC tells you which Wi-Fi your phone should join.
+- Works the other way too: send files from your phone, then **Download from phone** on the PC. They count as transferred once they're on the PC.
+- Big videos work too, with progress, speed and time left. Pick photos with long-press + slide like the Photos app.
+- Fits every screen: phones, tablets, small laptop windows and big monitors.
 
 ## Install (Windows)
 
@@ -21,13 +23,13 @@ PhoneDrop is then in the Start Menu. To remove it: Settings → Apps → Install
 ## Use it
 
 1. Open PhoneDrop on the PC and drop in photos, videos or files (or press Ctrl+V to paste).
-2. On your phone (same Wi-Fi), scan the QR code.
-3. The first time, Safari says the connection isn't private. Tap **Show Details → visit this website**. That's expected: the page comes from your own PC.
-4. Tap **Save all to Photos**, then **Save N Images** in the share sheet.
+2. Pick **Android** or **iPhone** above the QR code, connect the phone to the Wi-Fi it names, and scan the code.
+3. **Android:** tap **Save all to phone**. The files go to Downloads and show up in the Gallery.
+4. **iPhone:** the first time, Safari says the connection isn't private. Tap **Show Details → visit this website** (it's your own PC). Then tap **Save all to Photos** and **Save N Images** in the share sheet.
 
 Closing the PhoneDrop window stops it. Files are cleared the next time it starts.
 
-**Phone can't connect?** Same Wi-Fi on both? Guest/hotel/office Wi-Fi often blocks devices from seeing each other. Try your phone's hotspot. If Windows Firewall blocks it, search "Allow an app through Windows Firewall" and tick PhoneDrop for Private and Public.
+**Phone can't connect?** Is the phone on the Wi-Fi the PC names? Guest/hotel/office Wi-Fi often blocks devices from seeing each other: turn on your phone's hotspot and connect the PC to it instead. If Windows Firewall blocks it, search "Allow an app through Windows Firewall" and tick PhoneDrop for Private and Public.
 
 ## Run from source
 
@@ -72,7 +74,7 @@ A few minutes later GitHub Actions attaches `PhoneDrop-Setup.exe` to the release
 ```
 server.js            backend: web server, file transfer, live updates, HTTPS certificate
 public/index.html    frontend: the whole page for both PC and phone
-public/*.png         icons
+public/icon.svg      the app icon (the PNGs and assets/PhoneDrop.ico are rendered from it)
 vendor/qrcode.js     QR code generator (MIT)
 assets/              Windows icon
 installer/           installer wizard script and artwork (NSIS)
