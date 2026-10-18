@@ -1,36 +1,49 @@
-# Builds PhoneDrop-Setup.exe on every push to main and publishes it as the newest GitHub release,
-# replacing the previous one. This download link always gets the newest installer:
+# Builds PhoneDrop-Setup.exe when you publish a release on GitHub, and attaches it to that release.
+# Pushing to main builds nothing.
+#
+# To release a new version:
+#   1. github.com/dhairyakhetan/PhoneDrop -> Releases -> Draft a new release
+#   2. "Choose a tag" -> type a new one, higher than the last, like v1.0.1 -> "Create new tag on publish"
+#   3. Write what's new (or click "Generate release notes") -> Publish release
+#   About 3 minutes later PhoneDrop-Setup.exe is on the release, and installed copies of PhoneDrop
+#   show "Update available" (they check at start and every 6 hours).
+#
+# Tick "Set as a pre-release" for a test build: it gets an installer too, but installed copies don't update
+# to it and this link keeps giving the newest stable installer:
 #   https://github.com/dhairyakhetan/PhoneDrop/releases/latest/download/PhoneDrop-Setup.exe
-# Run it by hand from the Actions tab: Release -> Run workflow.
+#
+# Build failed because of a network hiccup? Actions -> the failed run -> Re-run jobs.
+# Failed because of the code? Fix it on main, delete the release and its tag, and publish it again.
 
 name: Release
 
 on:
-  push:
-    branches: [main]
-    paths-ignore: ['**.md'] # doc-only changes don't make a new release
-  workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
-  contents: write # create and delete releases
+  contents: write # attach files to the release
 
-# one release at a time, so two quick pushes can't delete each other's release
 concurrency:
-  group: release
+  group: release-${{ github.event.release.tag_name }}
   cancel-in-progress: false
 
 env:
-  # shown in the release title ("PhoneDrop 1.0.7 alpha") and notes. Set to '' once PhoneDrop is stable.
-  CHANNEL: alpha
+  TAG: ${{ github.event.release.tag_name }}
+  PRERELEASE: ${{ github.event.release.prerelease }}
+  # windows-latest doesn't include NSIS (the installer maker) any more, and Chocolatey's feed timed out on the
+  # first run, so use the official portable zip, checked against its SHA-256.
+  NSIS: '3.11'
+  NSIS_SHA256: c7d27f780ddb6cffb4730138cd1591e841f4b7edb155856901cdf5f214394fa1
 
 jobs:
-  release:
+  installer:
     runs-on: windows-latest
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4 # the commit the release's tag points at
 
       - uses: actions/setup-node@v4
         with:
@@ -40,19 +53,27 @@ jobs:
 
       - run: npm ci
 
-      - name: Make sure NSIS is installed
+      # The tag is the version: v1.2.3 -> 1.2.3 (shown in the app, the exe and the installer)
+      - name: Version from the tag
         run: |
-          if [ ! -f "/c/Program Files (x86)/NSIS/makensis.exe" ] && [ ! -f "/c/Program Files/NSIS/makensis.exe" ]; then
-            choco install nsis -y --no-progress
+          v="${TAG#v}"
+          if ! [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::The release tag must look like v1.2.3 (three numbers), not '$TAG'. Delete this release and its tag and make a new one."
+            exit 1
           fi
-
-      # MAJOR.MINOR from package.json + PATCH = run number (e.g. 1.0.57): every build is newer than the last.
-      # Not committed back; bump MAJOR/MINOR in package.json by hand for big releases.
-      - name: Set version
-        run: |
-          v=$(node -p "require('./package.json').version.split('.').slice(0, 2).join('.')").${{ github.run_number }}
+          pkg=$(node -p "require('./package.json').version")
+          if [ "$pkg" != "$v" ]; then
+            echo "::warning::package.json says $pkg but the tag says $v. Building $v. Bump package.json to match when convenient."
+          fi
           npm version "$v" --no-git-tag-version --allow-same-version
           echo "VERSION=$v" >> "$GITHUB_ENV"
+
+      - name: Get NSIS
+        run: |
+          curl -fsSL --retry 5 --retry-all-errors -o nsis.zip "https://downloads.sourceforge.net/project/nsis/NSIS%203/$NSIS/nsis-$NSIS.zip"
+          echo "$NSIS_SHA256  nsis.zip" | sha256sum -c -
+          powershell -NoProfile -Command "Expand-Archive -Path nsis.zip -DestinationPath .cache -Force"
+          echo "MAKENSIS=$(cygpath -w "$PWD/.cache/nsis-$NSIS/makensis.exe")" >> "$GITHUB_ENV"
 
       - run: npm run build
 
@@ -62,29 +83,25 @@ jobs:
           sha256sum dist/PhoneDrop-Setup.exe | cut -c1-64 > dist/PhoneDrop-Setup.exe.sha256
           cat dist/PhoneDrop-Setup.exe.sha256
 
-      - name: Publish release
+      - name: Attach the installer to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          title="PhoneDrop $VERSION"
-          {
-            if [ -n "$CHANNEL" ]; then
-              title="$title $CHANNEL"
-              printf '**This is an %s version**: an early test build. It works, but expect rough edges.\n\n' "$CHANNEL"
-            fi
-            cat .github/release-notes.md
-            printf '\nBuilt from %s\n' "$(git log -1 --pretty='%h: %s')"
-          } > dist/notes.md
-          gh release create "v$VERSION" dist/PhoneDrop-Setup.exe dist/PhoneDrop-Setup.exe.sha256 \
-            --title "$title" --notes-file dist/notes.md --target "$GITHUB_SHA" --latest
+        run: gh release upload "$TAG" dist/PhoneDrop-Setup.exe dist/PhoneDrop-Setup.exe.sha256 --clobber
 
-      - name: Delete older releases
+      # The app's "What's new" shows only what's above <!-- install -->, i.e. what you wrote.
+      - name: Add install help to the release notes
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for tag in $(gh release list --limit 100 --json tagName --jq '.[].tagName'); do
-            if [ "$tag" != "v$VERSION" ]; then
-              echo "Deleting $tag"
-              gh release delete "$tag" --cleanup-tag --yes
-            fi
-          done
+          gh release view "$TAG" --json body --jq .body > dist/notes.md
+          if ! grep -q '<!-- install -->' dist/notes.md; then
+            {
+              printf '\n\n<!-- install -->\n'
+              if [ "$PRERELEASE" = true ]; then
+                printf '**This is a test version.** Installed copies of PhoneDrop don'\''t update to it by themselves.\n\n'
+              fi
+              cat .github/release-notes.md
+              printf '\nBuilt from %s\n' "$(git log -1 --pretty='%h: %s')"
+            } >> dist/notes.md
+            gh release edit "$TAG" --notes-file dist/notes.md
+          fi

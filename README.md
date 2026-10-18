@@ -16,6 +16,8 @@ Send photos, videos and files from your PC to your phone over Wi-Fi. No cables, 
 
 PhoneDrop is then in the Start Menu. To remove it: Settings → Apps → Installed apps → PhoneDrop → Uninstall.
 
+**Updates:** PhoneDrop checks for new versions by itself. When it says **PhoneDrop x.y.z is available**, click **Update now**. Windows asks for permission once, and PhoneDrop reopens on the new version a few seconds later.
+
 ## Use it
 
 1. Open PhoneDrop on the PC and drop in photos, videos or files (or press Ctrl+V to paste).
@@ -53,7 +55,17 @@ Open http://localhost:3000. Your phone's links are printed in the terminal.
 2. `npm install`
 3. `npm run build`
 
-This makes `dist/PhoneDrop.exe` (the app, with Node.js built in) and `dist/PhoneDrop-Setup.exe` (the installer). Bump `version` in `package.json` for a new release.
+This makes `dist/PhoneDrop.exe` (the app, with Node.js built in) and `dist/PhoneDrop-Setup.exe` (the installer).
+
+## Releasing a new version
+
+Nothing is built when you push to `main`. To publish a version:
+
+1. On GitHub: **Releases → Draft a new release**.
+2. **Choose a tag** → type a new version higher than the last, like `v1.0.1` → **Create new tag on publish**.
+3. Write what's new (or click **Generate release notes**) → **Publish release**.
+
+A few minutes later GitHub Actions attaches `PhoneDrop-Setup.exe` to the release, and installed copies of PhoneDrop offer the update. Tick **Set as a pre-release** for a test build: it gets an installer too, but nobody's PhoneDrop updates to it automatically.
 
 ## Project layout
 
@@ -65,6 +77,7 @@ vendor/qrcode.js     QR code generator (MIT)
 assets/              Windows icon
 installer/           installer wizard script and artwork (NSIS)
 scripts/build.mjs    builds the .exe and the installer
+.github/workflows/   builds the installer when a release is published
 CLAUDE.md            detailed guide to how everything works
 ```
 

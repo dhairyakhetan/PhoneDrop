@@ -18,6 +18,8 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const { Readable, Transform } = require('stream');
+const { pipeline } = require('stream/promises');
 
 // Running as PhoneDrop.exe (Node bundled in)? Then always act like an app and keep data in the user's folder.
 let IS_EXE = false;
@@ -42,7 +44,11 @@ function asset(rel, encoding) {
   }
   return fs.readFileSync(path.join(__dirname, rel), encoding);
 }
-const VERSION = JSON.parse(asset('package.json', 'utf8')).version;
+const PKG = JSON.parse(asset('package.json', 'utf8'));
+const VERSION = PKG.version;
+// installed with PhoneDrop-Setup.exe (it writes installed.txt next to the exe)? Then the installer made the
+// shortcuts, and in-app updates are on.
+const INSTALLED = IS_EXE && fs.existsSync(path.join(path.dirname(process.execPath), 'installed.txt'));
 let pageCache = null;
 function page() { return IS_EXE ? (pageCache = pageCache || asset('public/index.html', 'utf8')) : asset('public/index.html', 'utf8'); }
 const ICON_FILES = {
@@ -58,10 +64,10 @@ const THUMBS = path.join(DIR, '.thumbs');
 const CERT_DIR = path.join(BASE, '.certs');
 const HOST = os.hostname();
 
-// ---------- start fresh (unless KEEP=1) — runs only once we know we're the only copy running ----------
+// ---------- start fresh (unless KEEP=1 or just updated) — runs only once we know we're the only copy running ----------
 fs.mkdirSync(THUMBS, { recursive: true });
-function clearOld() {
-  if (process.env.KEEP) return;
+function clearOld(keep) {
+  if (keep || process.env.KEEP) return;
   let n = 0;
   for (const name of fs.readdirSync(DIR)) {
     try { fs.rmSync(path.join(DIR, name), { recursive: true, force: true }); if (name[0] !== '.') n++; } catch (e) {}
@@ -106,6 +112,7 @@ function uniqueName(n) {
   while (fs.existsSync(path.join(DIR, out))) out = base + ' (' + i++ + ')' + ext;
   return out;
 }
+const psq = (x) => "'" + String(x).replace(/'/g, "''") + "'"; // a PowerShell 'string'
 function json(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(obj));
@@ -162,6 +169,7 @@ const clients = new Set();
 const savedBy = new Map(); // file name -> Set of phone ids that saved it
 const devices = new Map(); // phone id -> { id, name, conns, gone }
 function sendAll(ev, data) { const m = 'event: ' + ev + '\ndata: ' + JSON.stringify(data) + '\n\n'; for (const c of clients) c.write(m); }
+function sendLocal(ev, data) { const m = 'event: ' + ev + '\ndata: ' + JSON.stringify(data) + '\n\n'; for (const c of clients) if (c.local) c.write(m); }
 function devList() { return [...devices.values()].filter((d) => d.conns > 0 || d.lingering).map((d) => ({ id: d.id, name: d.name })); }
 function readJSON(req, cb) { let b = ''; req.on('data', (c) => { if (b.length < 1e6) b += c; }); req.on('end', () => { try { cb(JSON.parse(b)); } catch (e) { cb(null); } }); }
 let bumpTimer = null;
@@ -207,7 +215,17 @@ function handler(req, res) {
     return res.end(ICON_FILES[p]);
   }
   if (req.method === 'GET' && p === '/api/info') {
-    return json(res, 200, { host: HOST, ip: IP, http: HTTP_URL, https: httpsUp ? HTTPS_URL : null, app: APP, version: VERSION });
+    return json(res, 200, { host: HOST, ip: IP, http: HTTP_URL, https: httpsUp ? HTTPS_URL : null, app: APP, version: VERSION,
+      update: isLocal(req) ? updateInfo() : null });
+  }
+  // only from PhoneDrop's own page on this computer: not phones on the Wi-Fi, not other websites open in a browser here
+  if (req.method === 'POST' && p === '/api/update/install') {
+    const host = req.headers.host || '', origin = req.headers.origin;
+    if (!isLocal(req) || !/^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(host) || (origin && origin.replace(/^https?:\/\//, '') !== host))
+      return json(res, 403, { error: 'only from this computer' });
+    if (!update) return json(res, 404, { error: 'no update' });
+    if (!update.state || update.state === 'failed' || update.state === 'cancelled') installUpdate();
+    return json(res, 200, { ok: true });
   }
   if (req.method === 'GET' && p === '/api/files') return json(res, 200, listFiles());
   if (req.method === 'POST' && p === '/api/saved') {
@@ -231,6 +249,7 @@ function handler(req, res) {
     res.write('retry: 2000\n\n');
     clients.add(res);
     const local = isLocal(req);
+    res.local = local;
     const id = String(q('id') || '').slice(0, 40), dname = String(q('name') || 'Phone').slice(0, 40);
     if (!local && id) {
       let d = devices.get(id);
@@ -249,6 +268,7 @@ function handler(req, res) {
       });
     }
     res.write('event: devices\ndata: ' + JSON.stringify(devList()) + '\n\n');
+    if (local && update) res.write('event: update\ndata: ' + JSON.stringify(updateInfo()) + '\n\n');
     if (local) { localClients++; sawLocal = true; }
     req.on('close', () => { clients.delete(res); if (local) { localClients--; maybeQuit(); } });
     return;
@@ -409,6 +429,122 @@ function openWindow() {
   else run(process.platform === 'darwin' ? 'open' : 'xdg-open', [url]);
 }
 
+// ---------- in-app updates (installed PhoneDrop.exe only, never `node server.js`) ----------
+// Asks GitHub for the newest *stable* release: /releases/latest skips pre-releases and drafts. The page on this
+// PC then shows "Update available". Update now downloads PhoneDrop-Setup.exe, checks its size and SHA-256 and
+// runs it silently; the installer closes PhoneDrop, updates it and opens it again.
+const REPO = (/^github:([\w.-]+\/[\w.-]+)$/.exec(PKG.repository || '') || [])[1];
+const UPDATES = INSTALLED && !!REPO;
+const UPDATE_HOSTS = ['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com'];
+const UPDATED_FLAG = path.join(BASE, 'updated.txt'); // left for the next start: keep the shared files, reuse the window
+// { version, notes, page, url, sumUrl, size, state: '' | downloading | installing | restarting | failed | cancelled, error }
+let update = null;
+
+function newer(a, b) {
+  const x = a.split('.').map(Number), y = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return false;
+}
+function updateInfo() {
+  return update && { version: update.version, notes: update.notes, page: update.page, size: update.size, state: update.state, error: update.error };
+}
+function justUpdated() { try { fs.unlinkSync(UPDATED_FLAG); return true; } catch (e) { return false; } }
+function removeOldInstallers() {
+  try {
+    for (const f of fs.readdirSync(os.tmpdir()))
+      if (/^PhoneDrop-Setup-[\d.]+\.exe$/.test(f)) fs.rm(path.join(os.tmpdir(), f), { force: true }, () => {});
+  } catch (e) {}
+}
+async function checkUpdate() {
+  if (update && ['downloading', 'installing', 'restarting'].includes(update.state)) return;
+  try {
+    const r = await fetch('https://api.github.com/repos/' + REPO + '/releases/latest', {
+      headers: { 'User-Agent': 'PhoneDrop/' + VERSION, Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(20000) });
+    if (!r.ok) return;
+    const rel = await r.json();
+    const v = String(rel.tag_name || '').replace(/^v/, '');
+    if (!/^\d+\.\d+\.\d+$/.test(v) || !newer(v, VERSION) || (update && update.version === v)) return;
+    const file = (n) => (rel.assets || []).find((a) => a.name === n);
+    const setup = file('PhoneDrop-Setup.exe'), sum = file('PhoneDrop-Setup.exe.sha256');
+    if (!setup || !sum) return; // just published: CI is still building the installer, try again next time
+    update = {
+      version: v, notes: String(rel.body || '').split('<!-- install -->')[0].trim(), // the install help CI adds goes below that line
+      page: rel.html_url || 'https://github.com/' + REPO + '/releases/latest',
+      url: setup.browser_download_url, sumUrl: sum.browser_download_url, size: setup.size, state: '', error: '',
+    };
+    console.log('  PhoneDrop ' + v + ' is available');
+    sendLocal('update', updateInfo());
+  } catch (e) {} // offline or rate-limited: try again next time
+}
+// download from GitHub only, following redirects by hand so every hop is checked
+async function githubGet(url, signal) {
+  for (let hop = 0; hop < 5; hop++) {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' || !UPDATE_HOSTS.includes(u.hostname)) throw new Error('unexpected download address ' + u.hostname);
+    const r = await fetch(u, { redirect: 'manual', signal, headers: { 'User-Agent': 'PhoneDrop/' + VERSION } });
+    const to = r.status >= 300 && r.status < 400 && r.headers.get('location');
+    if (!to) { if (!r.ok) throw new Error('download failed (HTTP ' + r.status + ')'); return r; }
+    if (r.body) await r.body.cancel();
+    url = new URL(to, u).href;
+  }
+  throw new Error('too many redirects');
+}
+async function installUpdate() {
+  const u = update, file = path.join(os.tmpdir(), 'PhoneDrop-Setup-' + u.version + '.exe');
+  u.state = 'downloading'; u.error = '';
+  sendLocal('update', updateInfo());
+  const ac = new AbortController();
+  let stall = null;
+  const alive = () => { clearTimeout(stall); stall = setTimeout(() => ac.abort(), 60000); }; // nothing for a minute: give up
+  try {
+    alive();
+    const sum = (/\b[0-9a-f]{64}\b/i.exec(await (await githubGet(u.sumUrl, ac.signal)).text()) || [])[0];
+    if (!sum) throw new Error('the checksum file is empty');
+    const r = await githubGet(u.url, ac.signal);
+    const hash = crypto.createHash('sha256');
+    let got = 0, last = 0;
+    const count = new Transform({ transform(chunk, enc, cb) {
+      got += chunk.length; hash.update(chunk); alive();
+      if (Date.now() - last > 200) { last = Date.now(); sendLocal('update-progress', { got, total: u.size }); }
+      cb(null, chunk);
+    } });
+    await pipeline(Readable.fromWeb(r.body), count, fs.createWriteStream(file));
+    clearTimeout(stall);
+    sendLocal('update-progress', { got, total: u.size });
+    if (got !== u.size) throw new Error('the download was incomplete');
+    if (hash.digest('hex') !== sum.toLowerCase()) throw new Error('the download was damaged (checksum mismatch)');
+  } catch (e) {
+    clearTimeout(stall);
+    fs.rm(file, { force: true }, () => {});
+    u.state = 'failed'; u.error = ac.signal.aborted ? 'the download stopped' : String((e && e.message) || e);
+    console.log('  Update failed: ' + u.error);
+    return sendLocal('update', updateInfo());
+  }
+  // Start-Process, not spawn(): the installer needs admin, and only the shell can show Windows' "allow changes?" prompt.
+  // PowerShell exits 1 when that prompt is answered No.
+  u.state = 'installing';
+  sendLocal('update', updateInfo());
+  let done = false;
+  const launched = (code) => {
+    if (done) return; done = true;
+    if (code !== 0) {
+      u.state = code === 1 ? 'cancelled' : 'failed'; u.error = code === 1 ? '' : 'the installer didn’t start';
+      return sendLocal('update', updateInfo());
+    }
+    u.state = 'restarting';
+    sendLocal('update', updateInfo());
+    try { fs.writeFileSync(UPDATED_FLAG, u.version); } catch (e) {}
+    console.log('  Installing PhoneDrop ' + u.version + '. It reopens by itself.');
+    setTimeout(() => process.exit(0), 1000);
+  };
+  const ps = 'try { Start-Process -FilePath ' + psq(file) + " -ArgumentList '/S' -ErrorAction Stop; exit 0 } catch { exit 1 }";
+  try {
+    const c = spawn('powershell', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', ps], { detached: true, windowsHide: true, stdio: 'ignore' });
+    c.on('error', () => launched(-1));
+    c.on('exit', (code) => launched(code));
+  } catch (e) { launched(-1); }
+}
+
 // ---------- start ----------
 function portBusy(port) {
   if (APP) { openWindow(); setTimeout(() => process.exit(0), 300); return; } // already running: just show it
@@ -423,26 +559,30 @@ const httpServer = noLimits(http.createServer(handler));
 httpServer.on('error', (e) => { if (e.code === 'EADDRINUSE') portBusy(HTTP_PORT); else throw e; });
 httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
   console.log('\n  PhoneDrop ' + VERSION + ' is running on ' + HOST + '\n');
-  clearOld();
+  const updated = justUpdated();
+  clearOld(updated);
   console.log('  Open on this computer : http://localhost:' + HTTP_PORT);
   console.log('  Shared folder         : ' + DIR + '\n');
   startHttps();
-  if (APP) openWindow();
+  // just updated: the old window reloads itself once we're up, so only open one if it doesn't come back
+  if (APP && updated) setTimeout(() => { if (!sawLocal) openWindow(); }, 5000);
+  else if (APP) openWindow();
   ensureShortcut();
+  if (UPDATES) {
+    setTimeout(() => { removeOldInstallers(); checkUpdate(); }, 10000);
+    setInterval(checkUpdate, 6 * 3600000);
+  }
 });
 
 // PhoneDrop.exe: add itself to the Start Menu so it can be found by searching "PhoneDrop"
 function ensureShortcut() {
-  if (!IS_EXE || process.platform !== 'win32') return;
-  // installed with PhoneDrop-Setup.exe? The installer already made the shortcuts.
-  if (fs.existsSync(path.join(path.dirname(process.execPath), 'installed.txt'))) return;
+  if (!IS_EXE || process.platform !== 'win32' || INSTALLED) return; // the installer already made the shortcuts
   const lnk = path.join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'PhoneDrop.lnk');
   const stamp = path.join(BASE, 'shortcut.txt');
   try { if (fs.existsSync(lnk) && fs.readFileSync(stamp, 'utf8') === process.execPath) return; } catch (e) {}
-  const q = (x) => "'" + String(x).replace(/'/g, "''") + "'";
-  const ps = '$s=(New-Object -ComObject WScript.Shell).CreateShortcut(' + q(lnk) + ');' +
-    '$s.TargetPath=' + q(process.execPath) + ';$s.WorkingDirectory=' + q(path.dirname(process.execPath)) + ';' +
-    '$s.Description=' + q('Send photos and files from this PC to your phone') + ';$s.Save()';
+  const ps = '$s=(New-Object -ComObject WScript.Shell).CreateShortcut(' + psq(lnk) + ');' +
+    '$s.TargetPath=' + psq(process.execPath) + ';$s.WorkingDirectory=' + psq(path.dirname(process.execPath)) + ';' +
+    '$s.Description=' + psq('Send photos and files from this PC to your phone') + ';$s.Save()';
   try {
     const c = spawn('powershell', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', ps], { windowsHide: true, stdio: 'ignore' });
     c.on('error', () => {});
