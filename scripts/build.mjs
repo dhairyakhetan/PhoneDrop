@@ -24,6 +24,7 @@ fs.mkdirSync(DIST, { recursive: true });
 const ASSETS = [
   'package.json',
   'public/index.html',
+  'public/icon.svg',
   'public/icon.png',
   'public/favicon.png',
   'public/apple-touch-icon.png',

@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>PhoneDrop</title>
+<link rel="icon" type="image/svg+xml" sizes="any" href="/icon.svg">
 <link rel="icon" type="image/png" sizes="256x256" href="/icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -39,18 +40,28 @@ button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;paddin
 button:disabled{cursor:default}
 svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 
-/* ---------- buttons ---------- */
+/* ---------- buttons ----------
+   .btn (40px) · .btn.sm (32px chips) · variants: primary, tint (soft accent), ghost (no fill), danger, solid-danger.
+   Touch screens get taller buttons (see the end of this <style>). */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;padding:0 16px;border-radius:12px;
-  background:var(--surface2);font-weight:600;font-size:14px;transition:background .15s,transform .1s,opacity .15s;white-space:nowrap}
+  background:var(--surface2);font-weight:600;font-size:14px;transition:background .15s,color .15s,transform .1s,opacity .15s;white-space:nowrap;text-decoration:none;color:inherit}
+.btn svg.i{width:18px;height:18px}
 .btn:active:not(:disabled){transform:scale(.97)}
 .btn:hover:not(:disabled){background:var(--line2)}
 .btn.primary{background:var(--acc);color:var(--on-acc)}
 .btn.primary:hover:not(:disabled){background:var(--acc-press)}
+.btn.tint{background:var(--acc-soft);color:var(--acc)}
+.btn.tint:hover:not(:disabled){background:rgba(91,140,255,.24)}
+.btn.ghost{background:transparent;color:var(--mute)}
+.btn.ghost:hover:not(:disabled){background:var(--surface2);color:var(--text)}
 .btn.danger{color:var(--danger)}
-.btn.danger:hover:not(:disabled){background:var(--danger-soft)}
+.btn.danger:hover:not(:disabled){background:var(--danger-soft);color:var(--danger)}
 .btn.solid-danger{background:var(--danger);color:#fff}
+.btn.sm{height:32px;padding:0 12px;border-radius:10px;font-size:13px;gap:6px}
+.btn.sm svg.i{width:16px;height:16px}
 .btn.icon{width:40px;padding:0}
 .btn:disabled{opacity:.45}
+button:focus-visible,a:focus-visible,label:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .link{color:var(--acc);font-weight:600;padding:6px 8px;border-radius:8px;font-size:15px}
 .link:hover{background:var(--acc-soft)}
 .link.danger{color:var(--danger)}
@@ -75,13 +86,29 @@ svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-widt
 .card{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:22px}
 .connect{display:flex;gap:22px;align-items:center}
 .qr{width:172px;height:172px;flex:none;border-radius:14px;background:#fff;padding:10px;box-shadow:0 0 0 1px var(--line)}
+.qr{position:relative}
 .qr img{width:100%;height:100%;display:block;image-rendering:pixelated}
+.qr-off{position:absolute;inset:0;display:none;place-items:center;color:var(--faint);background:var(--surface2);border-radius:inherit}
+.qr-off svg.i{width:56px;height:56px;stroke-width:1.6}
+.nonet .qr{background:var(--surface2)}
+.nonet .qr img{visibility:hidden}
+.nonet .qr-off{display:grid}
+.netline{display:flex;gap:10px;align-items:flex-start;margin:0 0 14px!important;font-size:14px;line-height:1.45}
+.netline svg.i{width:18px;height:18px;margin-top:1px;color:var(--acc)}
+.netline b{color:var(--text)}
+.nonet .netline svg.i{color:var(--danger)}
+.nets{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:-4px 0 14px;font-size:12.5px;color:var(--mute)}
+.nets span{margin-right:2px}
+.chip{height:30px;padding:0 12px;border-radius:999px;border:1px solid var(--line2);font-size:12.5px;font-weight:600;color:var(--mute);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip:hover{color:var(--text)}
+.chip.on{background:var(--acc-soft);border-color:transparent;color:var(--acc)}
 .cinfo{min-width:0;flex:1}
 .cinfo h2,.drop h2{margin:0 0 4px;font-size:18px;letter-spacing:-.01em}
 .mute{color:var(--mute)} .faint{color:var(--faint)}
 .cinfo p{margin:0 0 14px;font-size:14px}
-.seg{display:inline-flex;background:var(--surface2);border-radius:10px;padding:3px;margin-bottom:12px}
-.seg button{padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;color:var(--mute)}
+.seg{display:inline-flex;background:var(--surface2);border-radius:12px;padding:3px;margin-bottom:14px}
+.seg button{min-width:96px;height:34px;padding:0 14px;border-radius:9px;font-size:14px;font-weight:600;color:var(--mute);transition:background .15s,color .15s}
+.seg button:hover:not(.on){color:var(--text)}
 .seg button.on{background:var(--surface);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.2)}
 .linkrow{display:flex;gap:8px;align-items:center}
 .linkrow code{flex:1;min-width:0;height:40px;line-height:40px;padding:0 12px;border-radius:10px;background:var(--surface2);
@@ -99,6 +126,7 @@ svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-widt
 
 /* ---------- connected bar ---------- */
 .slim{display:flex;align-items:center;gap:14px;padding:12px 12px 12px 14px;margin-bottom:22px;border-radius:18px}
+.s-acts{display:flex;gap:8px;flex:none}
 .s-ic{width:42px;height:42px;border-radius:13px;background:rgba(52,199,123,.14);color:var(--ok);display:grid;place-items:center;flex:none}
 .s-ic svg.i{width:22px;height:22px}
 .s-t{flex:1;min-width:0}
@@ -128,8 +156,9 @@ svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-widt
 @media (max-width:760px){.upd{flex-wrap:wrap}.u-t{flex-basis:calc(100% - 56px)}}
 
 /* ---------- toolbar ---------- */
-.tools{display:flex;align-items:center;gap:6px;margin:0 0 12px;min-height:36px}
-.tools .count{flex:1;font-weight:600;font-size:15px}
+.tools{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:0 0 12px;min-height:36px}
+.tools .count{flex:1 1 auto;font-weight:600;font-size:15px;white-space:nowrap}
+.acts{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
 .tools .count span{color:var(--mute);font-weight:500}
 
 /* ---------- grid ---------- */
@@ -151,6 +180,11 @@ svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-widt
   box-shadow:0 1px 4px rgba(0,0,0,.35);pointer-events:none}
 .svd svg.i{width:12px;height:12px;stroke-width:3.2}
 .tile.saved .svd{display:grid}
+.dir{position:absolute;right:7px;top:7px;width:20px;height:20px;border-radius:50%;display:none;place-items:center;color:#fff;box-shadow:0 1px 4px rgba(0,0,0,.35);pointer-events:none}
+.dir svg.i{width:12px;height:12px;stroke-width:3}
+.tile.inc .dir{display:grid;background:var(--acc)}
+.tile.out .dir{display:grid;background:rgba(20,22,28,.72)}
+.selecting .tile .dir{display:none!important}
 .selecting .tile .chk{opacity:1}
 .selecting .tile.saved .svd{display:none}
 .tile.sel .chk{background:var(--acc);border-color:#fff}
@@ -215,6 +249,8 @@ svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-widt
 .banner .b-t{flex:1;min-width:0;font-size:13px;color:var(--mute)}
 .banner .b-t b{display:block;color:var(--text);font-size:14px}
 .banner .btn{height:36px;padding:0 12px;font-size:13px}
+.banner.warn{background:var(--danger-soft);border-color:rgba(255,95,87,.25)}
+.banner.warn .b-ic{background:var(--danger)}
 
 .dock{position:fixed;left:0;right:0;bottom:0;z-index:35;padding:28px 14px calc(14px + var(--sab));
   background:linear-gradient(to bottom,transparent,var(--bg) 42%);pointer-events:none}
@@ -311,8 +347,86 @@ svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-widt
 .desk-only{} .mobile .desk-only{display:none!important}
 .mob-only{display:none!important} .mobile .mob-only{display:revert!important}
 .mobile .mob-flex{display:flex!important}
-@media (max-width:900px){.hero{grid-template-columns:1fr}}
-@media (max-width:560px){.connect{flex-direction:column;align-items:stretch}.qr{margin:0 auto}}
+.mobile .tile .dir{width:18px;height:18px;right:5px;top:5px}
+.mobile .lb-bot{gap:10px;padding-left:16px;padding-right:16px}
+.mobile .lb-bot .btn{flex:1;max-width:260px;border-radius:16px}
+
+/* ---------- in-between sizes ----------
+   PC window: large (≥1600) · laptop · medium (≤1100) · stacked (≤900) · narrow (≤760) · very narrow (≤560).
+   Phone layout: tiny phones (<360) · phones · landscape phones (short screens) · tablets (≥700 wide and tall).
+   Touch screens get bigger buttons whatever their size. */
+@media (pointer:coarse){
+  .btn{height:44px}
+  .btn.sm{height:36px;padding:0 14px}
+  .seg button{height:40px}
+  .chip{height:36px}
+  .lb .rb{width:44px;height:44px}
+  .mobile .lb-bot .btn{height:50px;font-size:15px}
+  .sheet .row .btn{height:50px}
+  .banner .btn{height:40px}
+}
+@media (min-width:1600px){
+  .bar-in,.wrap{max-width:1480px}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(176px,1fr));gap:12px}
+}
+@media (max-width:1100px){
+  .hero{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}
+  .qr{width:152px;height:152px}
+}
+@media (max-width:900px){
+  .hero{grid-template-columns:1fr}
+  .drop{padding:26px 22px}
+}
+@media (max-width:760px){
+  .wrap{padding:16px}
+  .bar-in{padding:0 16px}
+  .card{padding:18px}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(124px,1fr));gap:8px}
+  .slim{flex-wrap:wrap}
+  .s-t{flex-basis:calc(100% - 56px)}
+  .s-acts{width:100%}
+  .s-acts .btn{flex:1}
+  .pill{left:16px;right:16px;transform:translateY(140%)}
+  .pill.show{transform:none}
+  .pill .n{flex:1}
+  .up{left:16px;right:16px;width:auto}
+}
+@media (max-width:560px){
+  .connect{flex-direction:column;align-items:stretch}
+  .qr{margin:0 auto}
+  .seg{display:flex}
+  .seg button{flex:1;min-width:0}
+  .pill .btn:not(.icon){padding:0 12px}
+}
+@media (max-width:359px){
+  .mobile .bar-in{padding:0 10px 0 12px}
+  .dock{padding-left:10px;padding-right:10px}
+  .save{font-size:15px;gap:8px;padding:0 10px}
+  .save .t2{font-size:11px}
+  .sq{width:54px;height:54px}
+  .mobile .lb-bot .btn{padding:0 10px}
+}
+@media (max-height:500px) and (orientation:landscape){
+  .mobile .bar-in{height:46px}
+  .dock{padding:14px 16px calc(8px + var(--sab))}
+  .dock-in{max-width:520px}
+  .save,.sq{height:48px;border-radius:15px}
+  .sq{width:48px}
+  .mobile .wrap{padding-bottom:calc(84px + var(--sab))}
+  .lb-top{padding-top:calc(6px + var(--sat));padding-bottom:6px}
+  .lb-bot{padding-bottom:calc(8px + var(--sab))}
+  .mobile .lb-bot .btn{height:42px}
+}
+@media (min-width:700px) and (min-height:501px){
+  .mobile .bar-in{padding:0 24px;height:60px}
+  .mobile .wrap{padding:6px 24px calc(130px + var(--sab))}
+  .mobile .tools{padding:12px 0 10px}
+  .mobile .grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+  .mobile .tile{border-radius:12px}
+  .mobile .banner{margin:12px 24px 4px}
+  .mobile .lb-nav{display:grid}
+  .dock-in{max-width:520px}
+}
 [hidden],.mobile [hidden]{display:none!important}
 </style>
 </head>
@@ -323,8 +437,13 @@ svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-widt
     <div class="logo"><svg class="i" viewBox="0 0 24 24"><path d="M12 4v13M6.5 11.5 12 17l5.5-5.5"/><path d="M5 20h14"/></svg></div>
     <div class="brand-t"><b>PhoneDrop</b><span id="sub"><i class="live off" id="live"></i>Connecting…</span></div>
   </div>
-  <button class="link" id="selBtn" hidden>Select</button>
+  <button class="btn sm tint" id="selBtn" hidden>Select</button>
 </div></header>
+
+<div class="banner warn mob-flex" id="lost" hidden>
+  <div class="b-ic" id="lostIc"></div>
+  <div class="b-t"><b>Can’t reach the computer</b><span id="lostP"></span></div>
+</div>
 
 <div class="banner mob-flex" id="secure" hidden>
   <div class="b-ic"><svg class="i" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
@@ -343,15 +462,16 @@ svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-widt
   </section>
 
   <section class="hero desk-only" id="hero">
-    <div class="card connect">
-      <div class="qr"><img id="qr" alt="QR code to open PhoneDrop on your phone"></div>
+    <div class="card connect" id="connect">
+      <div class="qr"><img id="qr" alt="QR code to open PhoneDrop on your phone"><div class="qr-off" id="qrOff"></div></div>
       <div class="cinfo">
-        <div class="h2row"><h2>Open on your phone</h2><button class="link" id="heroHide" hidden>Done</button></div>
-        <p class="mute">Point your phone camera at the code. Your phone needs to be on the same Wi-Fi.</p>
-        <div class="seg" id="seg" hidden>
-          <button data-k="https" class="on">Secure</button><button data-k="http">Plain</button>
+        <div class="h2row"><h2 id="cT">Open on your phone</h2><button class="btn sm" id="heroHide" hidden>Done</button></div>
+        <div class="seg" id="seg" aria-label="Which phone?">
+          <button data-k="android">Android</button><button data-k="iphone">iPhone</button>
         </div>
-        <div class="linkrow"><code id="link">…</code><button class="btn" id="copy">Copy</button></div>
+        <p class="netline" id="netLine"></p>
+        <div class="nets" id="nets" hidden></div>
+        <div class="linkrow" id="linkRow"><code id="link">…</code><button class="btn" id="copy"></button></div>
         <p class="note" id="note"></p>
         <button class="help" id="helpBtn">Phone can’t connect?</button>
       </div>
@@ -368,15 +488,20 @@ svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-widt
   <section class="card slim desk-only" id="slim" hidden>
     <div class="s-ic"><svg class="i" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18h2"/></svg></div>
     <div class="s-t"><b id="slimT">iPhone connected</b><span>Drop files anywhere in this window and they appear on the phone.</span></div>
-    <button class="btn" id="addPhone">Add another phone</button>
-    <button class="btn primary" id="addFiles"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add files</button>
+    <div class="s-acts">
+      <button class="btn" id="addPhone"><svg class="i" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2v2h-2zM18 18h2v2h-2zM14 18v2M20 14v1"/></svg>Add another phone</button>
+      <button class="btn primary" id="addFiles"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add files</button>
+    </div>
   </section>
 
   <div class="tools" id="tools" hidden>
     <div class="count" id="count"></div>
-    <button class="link" id="allBtn">Select all</button>
-    <button class="link desk-only" id="clearSaved" hidden>Remove saved</button>
-    <button class="link danger desk-only" id="clearBtn">Clear all</button>
+    <div class="acts">
+      <button class="btn sm ghost" id="allBtn"></button>
+      <button class="btn sm tint desk-only" id="getBtn" hidden></button>
+      <button class="btn sm ghost desk-only" id="clearSaved" hidden></button>
+      <button class="btn sm ghost danger desk-only" id="clearBtn"><svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>Clear all</button>
+    </div>
   </div>
 
   <div class="grid pgrid" id="pgrid" hidden></div>
@@ -460,6 +585,8 @@ var canShowHeic = isIOS || isSafari;
 var canShareFiles = false;
 try { canShareFiles = window.isSecureContext && !!navigator.canShare && navigator.canShare({ files: [new File(['x'], 'x.jpg', { type: 'image/jpeg' })] }); } catch (e) {}
 var useShare = isIOS && canShareFiles;      // iPhone on the secure link -> share sheet -> "Save N Images"
+var useBlob = isMobile && !isIOS;           // Android & co: download into memory, then save to Downloads from there
+var usePrefetch = useShare || useBlob;      // both: one tap saves, small batches are fetched in the background first
 document.body.classList.add(isMobile ? 'mobile' : 'desktop');
 
 var BATCH_MAX = 25, BATCH_BYTES = 300 * 1048576, batchSize = BATCH_MAX;
@@ -473,10 +600,20 @@ var IC = {
   photos: '<svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-8 8"/></svg>',
   down: '<svg class="i" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>',
   check: '<svg class="i" viewBox="0 0 24 24"><path d="M5 12.5 9.5 17 19 7.5"/></svg>',
+  x: '<svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  copy: '<svg class="i" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>',
+  checks: '<svg class="i" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="m8 12 3 3 5-6"/></svg>',
+  broom: '<svg class="i" viewBox="0 0 24 24"><path d="M5 12.5 9.5 17 19 7.5"/><path d="M4 20h16" opacity=".5"/></svg>',
+  arrUp: '<svg class="i" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
+  arrDown: '<svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
   lock: '<svg class="i" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
   play: '<svg class="i" viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z" fill="currentColor" stroke="none"/></svg>',
   folder: '<svg class="i" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   info: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>',
+  wifi: '<svg class="i" viewBox="0 0 24 24"><path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.5 16a5 5 0 0 1 7 0"/><path d="M12 19.5h.01"/></svg>',
+  nowifi: '<svg class="i" viewBox="0 0 24 24"><path d="M2.5 9a14 14 0 0 1 4-2.6M11 5.1A14 14 0 0 1 21.5 9M5.5 12.5a9.5 9.5 0 0 1 3.6-2.2M15 10.5a9.5 9.5 0 0 1 3.5 2M8.5 16a5 5 0 0 1 7 0"/><path d="M12 19.5h.01M3 3l18 18"/></svg>',
+  hotspot: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1.8"/><path d="M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7M5.6 18.4a9 9 0 0 1 0-12.8M18.4 5.6a9 9 0 0 1 0 12.8"/></svg>',
+  cable: '<svg class="i" viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0z"/><path d="M12 17v4"/></svg>',
   update: '<svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66L20 8.5"/><path d="M20 3.5v5h-5"/></svg>',
   spin: '<svg class="i" viewBox="0 0 24 24" style="animation:sp 1s linear infinite"><path d="M12 3a9 9 0 1 0 9 9"/></svg>'
 };
@@ -494,6 +631,10 @@ function isHeic(f){ return /heic|heif/.test(f.type); }
 function showable(f){ return kind(f) === 'image' && f.type !== 'image/tiff' && f.type !== 'image/x-adobe-dng' && (!isHeic(f) || canShowHeic); }
 function ext(f){ var m = /\.([^.]+)$/.exec(f.name); return m ? m[1].toUpperCase().slice(0, 5) : 'FILE'; }
 function key(f){ return f.name + '|' + f.mtime + '|' + f.size; }
+// Files go both ways. A phone's own uploads aren't offered back to it, and on the PC they count as transferred once
+// they're downloaded here (the server notices the download finishing and sets `got`).
+function ownFile(f){ return !!f.fromId && f.fromId === myId; }
+function doneOnPc(f){ return f.from ? !!f.got : f.saved > 0; }
 function noun(list){
   var im = 0, vi = 0; list.forEach(function(f){ var k = kind(f); if (k === 'image') im++; else if (k === 'video') vi++; });
   if (im === list.length) return list.length === 1 ? 'photo' : 'photos';
@@ -502,6 +643,8 @@ function noun(list){
 }
 var toastT;
 function toast(t){ var e = $('toast'); e.textContent = t; e.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(function(){ e.classList.remove('show'); }, 2600); }
+// icon + label, only touched when it changes (keeps hover states and avoids flicker)
+function setBtn(b, icon, label){ var h = icon + '<span>' + esc(label) + '</span>'; if (b._h !== h) { b.innerHTML = h; b._h = h; } }
 function vibrate(){ try { navigator.vibrate && navigator.vibrate(10); } catch (e) {} }
 
 var saved = {};
@@ -531,55 +674,116 @@ function confirmBox(title, text, yes){
   return sheet({ title: title, text: text, actions: [{ label: 'Cancel' }, { label: yes || 'Delete', cls: 'solid-danger' }] }).then(function(i){ return i === 1; });
 }
 function showHelp(){
+  var n = curNet(), w = n && n.ssid && n.hotspot !== 'pc' ? 'the Wi-Fi <b>' + esc(n.ssid) + '</b>' : 'the <b>same Wi-Fi</b> as this computer';
   sheet({ title: 'Phone can’t connect?', actions: [{ label: 'Got it', cls: 'primary' }], html:
     '<ul>' +
-    '<li>Make sure the phone and this computer are on the <b>same Wi-Fi</b>.</li>' +
-    '<li>Seeing “not private”? Tap <b>Show Details → visit this website</b>. That’s expected for your own computer.</li>' +
+    '<li>Is the phone on ' + w + '? Phones sometimes switch to mobile data or another network by themselves.</li>' +
+    '<li>No Wi-Fi, or guest, hotel or office Wi-Fi (those often block devices from seeing each other)? Use your <b>phone’s hotspot</b>: turn it on, connect this computer to it, then scan the new code here. PhoneDrop switches by itself.</li>' +
+    '<li>iPhone says “not private”? Tap <b>Show Details → visit this website</b>. That’s expected for your own computer.</li>' +
     '<li>Page won’t load at all? Windows Firewall may be blocking it. Search Windows for <b>Allow an app through Windows Firewall</b>, find <b>PhoneDrop</b> (or <b>Node.js</b>) and tick both <b>Private</b> and <b>Public</b>.</li>' +
-    '<li>Guest, hotel or office Wi-Fi often blocks devices from seeing each other. Turn on your phone’s <b>hotspot</b> and connect this computer to it.</li>' +
     '</ul>' });
 }
 
 /* ================= connection info ================= */
-var linkKind = 'https';
+// The PC shows a QR code for the network the phone should join. Android gets the plain http link (no warning);
+// iPhone gets the https one, which it needs to save straight to Photos. The server re-checks the network every
+// few seconds and sends `net` when it changes (e.g. this computer joined a phone's hotspot).
+var phoneKind = 'android'; try { phoneKind = localStorage.getItem('pd.phone') || 'android'; } catch (e) {}
+var netPick = '';   // ip of the network picked in the QR card, when this computer is on more than one
+function esc(t){ return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function curNet(){
+  var l = (info && info.nets) || [];
+  for (var i = 0; i < l.length; i++) if (l[i].ip === netPick) return l[i];
+  return l[0] || null;
+}
+function netShort(n){
+  if (!n) return 'no network';
+  if (n.hotspot === 'pc') return 'own hotspot';
+  return n.ssid ? (n.hotspot === 'phone' ? 'hotspot ' : 'Wi-Fi ') + n.ssid : n.kind === 'wifi' ? 'Wi-Fi' : 'wired network';
+}
+function netLine(n){
+  if (!n) return IC.nowifi + '<span>Connect this computer to Wi-Fi, or turn on your phone’s hotspot and connect this computer to it. PhoneDrop notices by itself.</span>';
+  if (n.hotspot === 'pc') return IC.hotspot + '<span>Connect your phone to <b>this computer’s hotspot</b> (Windows Settings → Network → Mobile hotspot shows its name and password), then scan the code.</span>';
+  if (n.hotspot === 'phone') return IC.hotspot + '<span>This computer is on ' + (n.ssid ? 'the hotspot <b>' + esc(n.ssid) + '</b>' : 'a phone’s hotspot') + '. Scan the code with that phone, or connect another phone to its hotspot first.</span>';
+  if (n.kind === 'wifi') return IC.wifi + '<span>' + (n.ssid ? 'Connect your phone to the Wi-Fi <b>' + esc(n.ssid) + '</b>' : 'Connect your phone to the same Wi-Fi as this computer') + ', then scan the code with its camera.</span>';
+  return IC.cable + '<span>This computer is on a cable. Connect your phone to the Wi-Fi of the same router, then scan the code.</span>';
+}
 function showLink(){
-  if (!info) return;
-  var u = linkKind === 'https' && info.https ? info.https : info.http;
+  if (!info || isMobile) return;
+  var n = curNet(), ios = phoneKind === 'iphone', l = info.nets || [];
+  $('connect').classList.toggle('nonet', !n);
+  $('cT').textContent = n ? 'Open on your phone' : 'Not connected to a network';
+  $('seg').hidden = $('linkRow').hidden = $('note').hidden = !n;
+  [].forEach.call($('seg').children, function(c){ c.classList.toggle('on', c.dataset.k === phoneKind); });
+  $('netLine').innerHTML = netLine(n);
+  if (!$('qrOff').firstChild) $('qrOff').innerHTML = IC.nowifi;
+  $('nets').hidden = l.length < 2;
+  $('nets').innerHTML = l.length < 2 ? '' : '<span>Network</span>' + l.map(function(x){
+    var label = x.hotspot === 'pc' ? 'This computer’s hotspot' : x.ssid || ((x.kind === 'wifi' ? 'Wi-Fi ' : 'Cable ') + x.ip);
+    return '<button class="chip' + (x === n ? ' on' : '') + '" data-ip="' + esc(x.ip) + '">' + esc(label) + '</button>';
+  }).join('');
+  if (!n) return;
+  var u = ios && n.https ? n.https : n.http, q = '/qr.svg?u=' + enc(u);
   $('link').textContent = u;
-  $('qr').src = '/qr.svg?u=' + enc(u);
-  $('note').innerHTML = (linkKind === 'https' && info.https)
-    ? IC.info + '<span>The first time, your phone shows a privacy warning. Tap <b>Show Details</b> → <b>visit this website</b>. It’s safe: it’s just your own computer. This link lets the iPhone save straight to Photos.</span>'
-    : IC.info + '<span>No warning, but iPhone can’t save straight to Photos from this link. Use <b>Secure</b> for that.</span>';
+  if ($('qr').getAttribute('src') !== q) $('qr').setAttribute('src', q);
+  $('note').innerHTML = IC.info + '<span>' + (!ios
+    ? 'No warnings on Android. Saved photos and videos go to the phone’s <b>Downloads</b> and show up in its Gallery.'
+    : n.https ? 'The first time, Safari says the connection isn’t private: tap <b>Show Details</b> → <b>visit this website</b>. It’s your own computer, so it’s safe. This link lets the iPhone save straight to Photos.'
+    : 'The secure link isn’t available, so the iPhone can download files but not save straight to Photos.') + '</span>';
+}
+function applyNet(d){
+  if (!info || !d) return;
+  ['ip', 'http', 'https', 'nets'].forEach(function(k){ if (k in d) info[k] = d[k]; });
+  showLink(); renderChrome();
 }
 fetch('/api/info').then(function(r){ return r.json(); }).then(function(i){
   info = i;
+  var port = function(u){ return u ? u.split(':').pop() : ''; };
+  // Android doesn't need the secure link (it only matters for iPhone's Save to Photos), so skip its warning
+  if (isAndroid && location.protocol === 'https:') { location.replace('http://' + location.hostname + ':' + port(i.http) + location.pathname + location.search); return; }
   $('foot').hidden = !i.app;
-  $('seg').hidden = !i.https;
-  if (!i.https) linkKind = 'http';
   showLink();
   renderChrome();
   setUpdate(i.update);
   if (isIOS && !window.isSecureContext && i.https) {
     $('secure').hidden = false;
-    $('secureGo').href = i.https;
+    $('secureGo').href = 'https://' + location.hostname + ':' + port(i.https) + '/';
   }
 }).catch(function(){});
 $('seg').addEventListener('click', function(e){
   var b = e.target.closest('button'); if (!b) return;
-  linkKind = b.dataset.k;
-  [].forEach.call(this.children, function(c){ c.classList.toggle('on', c === b); });
+  phoneKind = b.dataset.k; try { localStorage.setItem('pd.phone', phoneKind); } catch (x) {}
   showLink();
 });
+$('nets').addEventListener('click', function(e){
+  var b = e.target.closest('button'); if (!b) return;
+  netPick = b.dataset.ip; showLink(); renderChrome();
+});
+setBtn($('copy'), IC.copy, 'Copy');
 $('copy').onclick = function(){
   var t = $('link').textContent, b = this;
-  function ok(){ b.textContent = 'Copied'; setTimeout(function(){ b.textContent = 'Copy'; }, 1500); }
+  function ok(){ setBtn(b, IC.check, 'Copied'); setTimeout(function(){ setBtn(b, IC.copy, 'Copy'); }, 1500); }
   if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(t).then(ok, fallback); else fallback();
   function fallback(){ var r = document.createRange(); r.selectNodeContents($('link')); var s = getSelection(); s.removeAllRanges(); s.addRange(r); try { document.execCommand('copy'); ok(); } catch (e) {} }
 };
 
 /* ================= file list + live updates ================= */
-var lastJSON = '', online = false;
-function setLive(v){ online = v; $('live').className = 'live' + (v ? '' : ' off'); }
+var lastJSON = '', online = false, lostT = 0, seen = null;
+function setLive(v){
+  online = v; $('live').className = 'live' + (v ? '' : ' off');
+  if (v) { clearTimeout(lostT); lostT = 0; $('lost').hidden = true; }
+  else if (isMobile && !lostT && $('lost').hidden) lostT = setTimeout(function(){ lostT = 0; if (!online) showLost(); }, 4000);
+}
+// phone lost the computer for a few seconds: say which Wi-Fi it should be on
+function showLost(){
+  var l = (info && info.nets) || [], n = null;
+  for (var i = 0; i < l.length; i++) if (l[i].ip === location.hostname) n = l[i];
+  n = n || l[0];
+  var w = n && n.ssid && n.hotspot !== 'pc' ? (n.hotspot === 'phone' ? 'the hotspot <b>' : 'the Wi-Fi <b>') + esc(n.ssid) + '</b>' : 'the same Wi-Fi as the computer';
+  if (!$('lostIc').firstChild) $('lostIc').innerHTML = IC.nowifi;
+  $('lostP').innerHTML = 'Make sure this phone is on ' + w + ' and PhoneDrop is open on ' + esc(info ? info.host : 'the computer') + '.';
+  $('lost').hidden = false;
+}
 function load(){
   return fetch('/api/files', { cache: 'no-store' }).then(function(r){ return r.text(); }).then(function(t){
     setLive(true);
@@ -587,6 +791,11 @@ function load(){
     lastJSON = t;
     files = JSON.parse(t);
     byName = {}; files.forEach(function(f){ byName[f.name] = f; });
+    if (!isMobile && seen) {   // "iPhone sent 3 files"
+      var by = {}; files.forEach(function(f){ if (f.from && !seen[f.name]) by[f.from] = (by[f.from] || 0) + 1; });
+      for (var w in by) toast(w + ' sent ' + plural(by[w], 'file') + ' · Download from phone keeps them');
+    }
+    seen = {}; files.forEach(function(f){ seen[f.name] = 1; });
     if (files.length) { var live = {}; files.forEach(function(f){ live[key(f)] = 1; }); for (var k in saved) if (!live[k]) delete saved[k]; persistSaved(); }
     reconcile();
   }).catch(function(){ setLive(false); });
@@ -609,6 +818,7 @@ try {
     var d = {}; try { d = JSON.parse(e.data); } catch (x) {}
     toast((d.name || 'Phone') + ' saved ' + plural(d.count || 0, d.media ? 'item' : 'file'));
   });
+  es.addEventListener('net', function(e){ try { applyNet(JSON.parse(e.data)); } catch (x) {} });
   es.addEventListener('update', function(e){ try { setUpdate(JSON.parse(e.data)); } catch (x) {} });
   es.addEventListener('update-progress', function(e){ try { updProgress(JSON.parse(e.data)); } catch (x) {} });
 } catch (e) {}
@@ -620,7 +830,7 @@ function makeTile(f){
   var d = document.createElement('div');
   d.className = 'tile'; d.dataset.name = f.name;
   d.innerHTML = '<div class="m"></div>' + (kind(f) === 'video' ? '<span class="vid">' + IC.play + '<b class="dur"></b></span>' : '') +
-    '<span class="svd">' + IC.check + '</span><span class="chk">' + IC.check + '</span>';
+    '<span class="svd">' + IC.check + '</span><span class="dir"></span><span class="chk">' + IC.check + '</span>';
   return d;
 }
 function face(f, big){
@@ -651,9 +861,14 @@ function paintTile(d, f){
   }
   if (f.dur) { var du = d.querySelector('.dur'); if (du && !du.textContent) du.textContent = fmtDur(f.dur); }
   d.classList.toggle('sel', sel.has(f.name));
-  var sv = isMobile ? !!saved[key(f)] : f.saved > 0;
+  var mine = isMobile && ownFile(f), inbound = !isMobile && !!f.from;
+  var sv = isMobile ? (mine ? !!f.got : !!saved[key(f)]) : doneOnPc(f);
   d.classList.toggle('saved', sv);
-  if (!isMobile) d.title = sv ? 'Saved on ' + (f.saved > 1 ? f.saved + ' phones' : 'phone') : '';
+  d.classList.toggle('out', mine && !f.got);     // sent from this phone; the computer hasn't downloaded it yet
+  d.classList.toggle('inc', inbound && !f.got);  // came from a phone; not downloaded to this computer yet
+  if ((mine || inbound) && !d._dir) { d.querySelector('.dir').innerHTML = mine ? IC.arrUp : IC.arrDown; d._dir = 1; }
+  if (!isMobile) d.title = inbound ? 'From ' + f.from + (f.got ? ' · downloaded to this computer' : ' · not downloaded to this computer yet')
+    : sv ? 'Saved on ' + (f.saved > 1 ? f.saved + ' phones' : 'phone') : '';
 }
 function reconcile(){
   var keep = {};
@@ -678,7 +893,7 @@ function renderChrome(){
   var n = files.length, s = sel.size;
   document.body.classList.toggle('selecting', selecting);
   // header subtitle
-  var sub = info ? (isMobile ? 'From ' + info.host : 'Sharing from ' + info.host) : 'Connecting…';
+  var sub = info ? (isMobile ? 'From ' + info.host : 'Sharing from ' + info.host + ' · ' + netShort(curNet())) : 'Connecting…';
   $('sub').innerHTML = '<i class="live' + (online ? '' : ' off') + '" id="live"></i>';
   $('sub').appendChild(document.createTextNode(sub));
   // toolbar
@@ -686,7 +901,7 @@ function renderChrome(){
   $('count').innerHTML = '';
   if (selecting) $('count').textContent = s ? plural(s, 'item') + ' selected' : 'Select items';
   else { $('count').textContent = plural(n, 'item') + ' '; var sp = document.createElement('span'); sp.textContent = '· ' + fmt(totalBytes(files)); $('count').appendChild(sp); }
-  $('allBtn').textContent = n && s === n ? 'Deselect all' : 'Select all';
+  setBtn($('allBtn'), n && s === n ? IC.x : IC.checks, n && s === n ? 'Deselect all' : 'Select all');
   $('allBtn').hidden = isMobile && !selecting;
   $('selBtn').hidden = !n;
   $('selBtn').textContent = selecting ? (isMobile ? 'Done' : 'Cancel') : 'Select';
@@ -702,9 +917,11 @@ function renderChrome(){
     $('slim').hidden = !connected || showQR;
     $('heroHide').hidden = !connected;
     if (connected) $('slimT').textContent = others.length === 1 ? others[0].name + ' connected' : others.length + ' phones connected';
-    var nSaved = files.filter(function(f){ return f.saved > 0; }).length;
+    var nSaved = files.filter(doneOnPc).length, nIn = files.filter(function(f){ return f.from && !f.got; }).length;
     $('clearSaved').hidden = !nSaved || selecting;
-    $('clearSaved').textContent = 'Remove saved (' + nSaved + ')';
+    setBtn($('clearSaved'), IC.broom, 'Remove saved (' + nSaved + ')');
+    $('getBtn').hidden = !nIn || selecting;
+    setBtn($('getBtn'), IC.arrDown, 'Download from phone (' + nIn + ')');
   }
   // desktop pill
   $('pill').classList.toggle('show', !isMobile && s > 0);
@@ -745,8 +962,12 @@ $('addPhone').onclick = function(){ showQR = true; renderChrome(); window.scroll
 $('addFiles').onclick = function(){ $('pick').click(); };
 $('helpBtn').onclick = showHelp;
 $('clearSaved').onclick = function(){
-  var l = files.filter(function(f){ return f.saved > 0; }).map(function(f){ return f.name; });
-  deleteNames(l, 'Remove ' + plural(l.length, 'saved file') + '?', 'They’re already on the phone, so they’ll just be removed from this computer.');
+  var l = files.filter(doneOnPc).map(function(f){ return f.name; });
+  deleteNames(l, 'Remove ' + plural(l.length, 'saved file') + '?', 'They’re already saved on a phone or downloaded to this computer, so they’ll just be removed from PhoneDrop.');
+};
+$('getBtn').onclick = function(){
+  var l = files.filter(function(f){ return f.from && !f.got; });
+  downloadMany(l); toast('Downloading ' + plural(l.length, 'file') + ' to this computer’s Downloads folder');
 };
 
 var lastClicked = null, suppressClick = 0;
@@ -863,7 +1084,7 @@ var cache = new Map(), inflight = new Map(), failed = new Set(), pfQueue = [], p
 var manualKey = '', batchKeyNow = '', dockMeter = new Meter();
 function targets(){
   if (selecting) return files.filter(function(f){ return sel.has(f.name); });
-  return files.filter(function(f){ return isMedia(f) && !saved[key(f)]; });
+  return files.filter(function(f){ return isMedia(f) && !saved[key(f)] && !ownFile(f); });
 }
 function nextBatch(list){
   var media = list.filter(isMedia), other = list.filter(function(f){ return !isMedia(f); });
@@ -910,8 +1131,10 @@ function prefetch(batch){
   batch.forEach(function(f){ var k = key(f); if (!cache.has(k) && !inflight.has(k) && !failed.has(k) && pfQueue.indexOf(f) < 0) pfQueue.push(f); });
   pfPump();
 }
+// while you look at one photo in the viewer it gets the whole Wi-Fi: background downloads wait (unless you asked for them)
+function pfPaused(){ return !$('lb').hidden && manualKey !== batchKeyNow; }
 function pfPump(){
-  while (pfActive < 3 && pfQueue.length) {
+  while (pfActive < 3 && pfQueue.length && !pfPaused()) {
     var f = pfQueue.shift(); pfActive++;
     fetchFile(f).catch(function(){}).then(function(){ pfActive--; renderDock(); pfPump(); });
   }
@@ -935,22 +1158,27 @@ function renderDock(){
   $('sendBtn').hidden = selecting;
   $('delBtn').hidden = !selecting;
   $('delBtn').disabled = !sel.size;
-  if (!files.length) return setDock({ mode: 'send', icon: IC.photos, t1: 'Send files to computer' });
+  var others = files.filter(function(f){ return !ownFile(f); });
+  if (!others.length && !selecting) {
+    var nGot = files.filter(function(f){ return f.got; }).length;
+    return setDock({ mode: 'send', icon: IC.photos, t1: 'Send files to computer', t2: files.length ? joinDot(plural(files.length, 'file') + ' sent',
+      nGot === files.length ? 'all saved on computer' : nGot ? nGot + ' saved on computer' : 'not saved on computer yet') : '' });
+  }
 
   var list = targets();
   if (isIOS && !canShareFiles && info && info.https) return setDock({ mode: 'secure', icon: IC.lock, t1: 'Enable Save to Photos', t2: 'Opens the secure link' });
   if (!list.length) {
     wantKeys = new Set(); abortUnwanted();
     if (selecting) return setDock({ mode: 'none', icon: IC.photos, t1: 'Select items to save', disabled: true });
-    if (!files.some(isMedia)) return setDock({ mode: 'selectfiles', icon: IC.folder, t1: 'Select files to save' });
+    if (!others.some(isMedia)) return setDock({ mode: 'selectfiles', icon: IC.folder, t1: 'Select files to save' });
     return setDock({ mode: 'again', icon: IC.check, t1: 'All saved', t2: 'Tap for options', done: true });
   }
   var nb = nextBatch(list), b = nb.list, total = nb.group.length;
-  if (!useShare) return setDock({ mode: 'download', icon: IC.down, t1: 'Download ' + (selecting ? '' : 'all ') + total + ' ' + noun(nb.group), t2: fmt(totalBytes(nb.group)) });
+  if (!usePrefetch) return setDock({ mode: 'download', icon: IC.down, t1: 'Download ' + (selecting ? '' : 'all ') + total + ' ' + noun(nb.group), t2: fmt(totalBytes(nb.group)) });
 
   var bk = b.map(key).join('\n');
   if (bk !== batchKeyNow) { batchKeyNow = bk; dockMeter = new Meter(); }
-  var where = nb.media ? 'to Photos' : 'to Files';
+  var where = !useShare ? 'to phone' : nb.media ? 'to Photos' : 'to Files';
   var big = nb.bytes > AUTO_BYTES, manual = manualKey === bk;
   var multi = total > b.length;
 
@@ -991,14 +1219,25 @@ function downloadOne(f){
   document.body.appendChild(a); a.click(); a.remove();
 }
 function downloadMany(list){ list.forEach(function(f, i){ setTimeout(function(){ downloadOne(f); }, i * 350); }); }
+// Android: save files that are already downloaded into memory. They land in Downloads (and the Gallery), and
+// blob: links don't trigger Chrome's "insecure download" warning on a plain http page.
+function saveBlobs(fl){
+  fl.forEach(function(file, i){
+    setTimeout(function(){
+      var u = URL.createObjectURL(file), a = document.createElement('a');
+      a.href = u; a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(u); }, 60000);
+    }, i * 250);
+  });
+}
 
 $('save').onclick = function(){
   if (dockMode === 'send') return $('pickPhone').click();
-  if (dockMode === 'secure') { location.href = info.https; return; }
+  if (dockMode === 'secure') { location.href = $('secureGo').href; return; }
   if (dockMode === 'selectfiles') { setSelecting(true); return; }
   if (dockMode === 'again') {
     var mine = files.filter(function(f){ return saved[key(f)]; });
-    sheet({ title: 'Everything’s saved ✓', text: plural(mine.length, 'item') + ' from here are in your Photos. Clean them off the computer?',
+    sheet({ title: 'Everything’s saved ✓', text: plural(mine.length, 'item') + ' from here ' + (useShare ? 'are in your Photos' : 'are saved on this phone') + '. Clean them off the computer?',
       actions: [{ label: 'Cancel' }, { label: 'Save them again' }, { label: 'Remove from computer', cls: 'primary' }] }).then(function(i){
       if (i === 2) {
         Promise.all(mine.map(function(f){ return fetch('/files/' + enc(f.name), { method: 'DELETE' }); })).then(function(){ toast('Removed from computer'); load(); });
@@ -1018,10 +1257,12 @@ $('save').onclick = function(){
   if (dockMode === 'retry') { b.forEach(function(f){ failed.delete(key(f)); }); manualKey = batchKeyNow; renderDock(); return; }
   if (dockMode === 'big') {
     if (nb.bytes > HUGE_BYTES) {
-      sheet({ title: 'This is a big one (' + fmt(nb.bytes) + ')', text: 'Saving to Photos downloads it into Safari first, which can fail for very large videos on older phones. Downloading to the Files app is the safest option for huge files.',
-        actions: [{ label: 'Cancel' }, { label: 'Download to Files' }, { label: 'Save to Photos', cls: 'primary' }] }).then(function(i){
+      sheet({ title: 'This is a big one (' + fmt(nb.bytes) + ')', text: useShare
+          ? 'Saving to Photos downloads it into Safari first, which can fail for very large videos on older phones. Downloading to the Files app is the safest option for huge files.'
+          : 'Saving it downloads it into the browser first, which can fail for very large videos. Downloading it directly is the safest option for huge files.',
+        actions: [{ label: 'Cancel' }, { label: useShare ? 'Download to Files' : 'Download directly' }, { label: useShare ? 'Save to Photos' : 'Save to phone', cls: 'primary' }] }).then(function(i){
         if (i === 2) { manualKey = batchKeyNow; renderDock(); }
-        else if (i === 1) { b.forEach(downloadOne); toast('Downloading — watch progress in Safari’s downloads (↓ in the address bar)'); }
+        else if (i === 1) { b.forEach(downloadOne); markSaved(b); toast(useShare ? 'Downloading — watch progress in Safari’s downloads (↓ in the address bar)' : 'Downloading — watch progress in the notification bar'); }
       });
       return;
     }
@@ -1031,12 +1272,14 @@ $('save').onclick = function(){
   if (dockMode !== 'share') return;
   var fl = b.map(function(f){ return cache.get(key(f)); });
   if (fl.some(function(x){ return !x; })) { renderDock(); return; }
-  navigator.share({ files: fl }).then(function(){
+  var done = function(){
     markSaved(b); manualKey = '';
     var left = nextBatch(targets()).group.length;
-    toast(left ? 'Saved ' + b.length + ' · ' + left + ' to go — tap again' : 'Saved ' + plural(b.length, nb.media ? 'item' : 'file') + ' ✓');
+    toast(left ? 'Saved ' + b.length + ' · ' + left + ' to go — tap again' : 'Saved ' + plural(b.length, nb.media ? 'item' : 'file') + (useBlob ? ' to Downloads' : '') + ' ✓');
     if (selecting && !sel.size) setSelecting(false); else renderChrome();
-  }).catch(function(err){
+  };
+  if (useBlob) { saveBlobs(fl); done(); return; }
+  navigator.share({ files: fl }).then(done).catch(function(err){
     if (err && err.name === 'AbortError') return;
     if (b.length > 5) { batchSize = Math.max(5, Math.floor(b.length / 2)); toast('That was too many at once. Using smaller batches.'); }
     else toast('Couldn’t open the share sheet. Try again.');
@@ -1242,17 +1485,19 @@ function upOne(file){
   U.active++;
   var id = Math.random().toString(36).slice(2), big = file.size > 8 * 1048576;
   var t = file._tile; setPendingProgress(t, 0, big);
-  makeThumb(file).then(function(th){
-    if (U.cancelled) throw new Error('cancelled');
-    setPendingPreview(t, th && th.blob);
-    return xhrUpload('/upload?name=' + enc(file.name) + (th && th.blob ? '&thumb=1' : ''), file,
-      function(n){ U.live[id] = n; setPendingProgress(t, file.size ? n / file.size : 1, big); upRenderT(); },
-      function(x){ U.xhrs[id] = x; })
-      .then(function(r){
-        t._final = r.name; t.classList.add('done');
-        if (th) return fetch('/thumb?name=' + enc(r.name) + (th.dur ? '&dur=' + th.dur.toFixed(1) : ''), { method: 'POST', body: th.blob || '' }).catch(function(){});
+  // the upload starts straight away; the thumbnail is made at the same time and sent right after
+  // (the server keeps the file hidden for up to 5 s until it arrives, so the tile appears once, fully drawn)
+  var media = /^(image|video)\//.test(file.type) || /\.(heic|heif|mov|mp4|m4v|webm)$/i.test(file.name);
+  var thumb = media ? makeThumb(file).then(function(th){ if (th && th.blob && t.parentNode) setPendingPreview(t, th.blob); return th; }) : null;
+  xhrUpload('/upload?name=' + enc(file.name) + (media ? '&thumb=1' : '') + '&from=' + enc(myId) + '&fromName=' + enc(myName), file,
+    function(n){ U.live[id] = n; setPendingProgress(t, file.size ? n / file.size : 1, big); upRenderT(); },
+    function(x){ U.xhrs[id] = x; })
+    .then(function(r){
+      t._final = r.name; t.classList.add('done');
+      if (thumb) return thumb.then(function(th){
+        return fetch('/thumb?name=' + enc(r.name) + (th && th.dur ? '&dur=' + th.dur.toFixed(1) : ''), { method: 'POST', body: (th && th.blob) || '' }).catch(function(){});
       });
-  }).then(function(){ U.done++; if (byName[t._final]) removePending(t); }, function(err){
+    }).then(function(){ U.done++; if (byName[t._final]) removePending(t); }, function(err){
     var msg = err && err.message;
     if (msg === 'cancelled') { removePending(t); return; }
     U.failed++; t.classList.add('err');
@@ -1309,17 +1554,19 @@ window.addEventListener('paste', function(e){
 $('ovT').textContent = isMobile ? 'Drop to send to computer' : 'Drop to send to your phone';
 
 /* ================= viewer ================= */
-var lbList = [], lbIdx = -1, lbKey = '', lbFile = null, lbWant = false, lbMeter = new Meter();
+var lbList = [], lbIdx = -1, lbKey = '', lbFile = null, lbWant = false, lbMeter = new Meter(), lbUrl = '';
 function openLb(name){
   lbList = files.slice();
   lbIdx = lbList.findIndex(function(f){ return f.name === name; });
   if (lbIdx < 0) return;
   $('lb').hidden = false; document.body.style.overflow = 'hidden';
   try { history.pushState({ lb: 1 }, ''); } catch (e) {}
+  if (pfPaused()) { var k0 = key(lbList[lbIdx]); inflight.forEach(function(e, k){ if (k !== k0) e.xhr.abort(); }); }
   showLb();
 }
 function lbRelease(){
   var k = lbKey; lbKey = ''; lbFile = null; lbWant = false;
+  if (lbUrl) { URL.revokeObjectURL(lbUrl); lbUrl = ''; }
   if (k && !wantKeys.has(k)) { var e = inflight.get(k); if (e) e.xhr.abort(); cache.delete(k); }
 }
 function closeLb(fromPop){
@@ -1327,15 +1574,31 @@ function closeLb(fromPop){
   $('lb').hidden = true; document.body.style.overflow = '';
   $('lbStage').textContent = ''; $('lbLoad').hidden = true;
   lbRelease();
+  if (isMobile) renderDock();   // background downloads carry on
   if (!fromPop && history.state && history.state.lb) history.back();
 }
 window.addEventListener('popstate', function(){ closeLb(true); });
 function showLb(){
   var f = lbList[lbIdx]; if (!f) return closeLb();
   lbRelease();
+  lbKey = key(f); lbMeter = new Meter();
   var st = $('lbStage'); st.textContent = '';
   $('lbLoad').hidden = true;
-  if (showable(f)) {
+  // phones: one download is used both to show the photo and to save it
+  var viaBlob = usePrefetch && showable(f) && f.size <= AUTO_BYTES;
+  if (viaBlob) {
+    var bimg = new Image(), want = lbKey, hide = function(){ $('lbLoad').hidden = true; };
+    bimg.alt = f.name; bimg.decoding = 'async';
+    if (f.thumb) bimg.src = thumbUrl(f);
+    $('lbLoad').hidden = false;
+    st.appendChild(bimg);
+    lbStart(f, function(file){
+      if (lbKey !== want) return;
+      bimg.onload = bimg.onerror = hide;
+      if (!file) { bimg.src = fileUrl(f); return; }   // couldn't download it: let the browser try directly
+      lbUrl = URL.createObjectURL(file); bimg.src = lbUrl;
+    });
+  } else if (showable(f)) {
     var img = new Image(); img.alt = f.name; img.decoding = 'async';
     if (f.thumb) {
       img.src = thumbUrl(f);
@@ -1359,21 +1622,21 @@ function showLb(){
   showLbMeta();
   $('lbP').disabled = lbIdx <= 0; $('lbN').disabled = lbIdx >= lbList.length - 1;
   $('lbP').style.opacity = lbIdx <= 0 ? .3 : 1; $('lbN').style.opacity = lbIdx >= lbList.length - 1 ? .3 : 1;
-  lbKey = key(f); lbMeter = new Meter();
-  if (useShare) {
+  if (usePrefetch) {
     $('lbSave').hidden = false; $('lbDl').hidden = true;
     lbWant = f.size <= AUTO_BYTES || cache.has(lbKey) || inflight.has(lbKey);
-    if (lbWant) lbStart(f);
+    if (lbWant && !viaBlob) lbStart(f);
   } else { $('lbSave').hidden = true; $('lbDl').hidden = false; }
   renderLbSave();
 }
-function lbStart(f){
+function lbStart(f, then){
   var k = key(f); lbWant = true;
-  fetchFile(f).then(function(file){ if (lbKey === k) { lbFile = file; renderLbSave(); } }, function(){ if (lbKey === k) renderLbSave(); });
+  fetchFile(f).then(function(file){ if (lbKey === k) { lbFile = file; renderLbSave(); } if (then) then(file); },
+    function(){ if (lbKey === k) renderLbSave(); if (then) then(null); });
 }
 function renderLbSave(){
-  var f = lbList[lbIdx], sb = $('lbSave'); if (!f || !useShare || $('lb').hidden) return;
-  var label = isMedia(f) ? 'Save to Photos' : 'Save to Files', icon = isMedia(f) ? IC.photos : IC.folder, k = key(f);
+  var f = lbList[lbIdx], sb = $('lbSave'); if (!f || !usePrefetch || $('lb').hidden) return;
+  var label = !useShare ? 'Save to phone' : isMedia(f) ? 'Save to Photos' : 'Save to Files', icon = !useShare ? IC.down : isMedia(f) ? IC.photos : IC.folder, k = key(f);
   var fill = 0, html, dis = false;
   if (lbFile || cache.has(k)) { lbFile = cache.get(k) || lbFile; html = icon + label; }
   else if (failed.has(k)) html = 'Download failed · tap to retry';
@@ -1401,11 +1664,14 @@ $('lbSave').onclick = function(){
     return;
   }
   lbFile = lbFile || cache.get(k);
+  if (useBlob) { saveBlobs([lbFile]); markSaved([f]); toast('Saved to Downloads ✓'); renderChrome(); showLbMeta(); return; }
   navigator.share({ files: [lbFile] }).then(function(){ markSaved([f]); toast('Saved ✓'); renderChrome(); showLbMeta(); }).catch(function(e){ if (!e || e.name !== 'AbortError') toast('Couldn’t open the share sheet'); });
 };
 function showLbMeta(){
   var f = lbList[lbIdx]; if (!f) return;
-  $('lbMeta').textContent = joinDot((lbIdx + 1) + ' of ' + lbList.length, fmt(f.size), f.dur ? fmtDur(f.dur) : '', saved[key(f)] ? 'Saved' : '');
+  var state = isMobile ? (ownFile(f) ? (f.got ? 'Sent · saved on computer' : 'Sent from this phone') : saved[key(f)] ? 'Saved' : '')
+    : f.from ? 'From ' + f.from + (f.got ? ' · downloaded' : '') : '';
+  $('lbMeta').textContent = joinDot((lbIdx + 1) + ' of ' + lbList.length, fmt(f.size), f.dur ? fmtDur(f.dur) : '', state);
 }
 $('lbDel').onclick = function(){
   var f = lbList[lbIdx]; if (!f) return;

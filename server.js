@@ -51,10 +51,12 @@ const VERSION = PKG.version;
 const INSTALLED = IS_EXE && fs.existsSync(path.join(path.dirname(process.execPath), 'installed.txt'));
 let pageCache = null;
 function page() { return IS_EXE ? (pageCache = pageCache || asset('public/index.html', 'utf8')) : asset('public/index.html', 'utf8'); }
+// icon.svg is the real icon (sharp at every size); the PNGs are rendered from it for places that need pixels
 const ICON_FILES = {
-  '/icon.png': asset('public/icon.png'),
-  '/favicon.png': asset('public/favicon.png'),
-  '/apple-touch-icon.png': asset('public/apple-touch-icon.png'),
+  '/icon.svg': [asset('public/icon.svg'), 'image/svg+xml'],
+  '/icon.png': [asset('public/icon.png'), 'image/png'],
+  '/favicon.png': [asset('public/favicon.png'), 'image/png'],
+  '/apple-touch-icon.png': [asset('public/apple-touch-icon.png'), 'image/png'],
 };
 
 const HTTP_PORT = Number(process.env.PORT) || 3000;
@@ -76,18 +78,112 @@ function clearOld(keep) {
   if (n) console.log('  Cleared ' + n + ' old file' + (n === 1 ? '' : 's') + ' (start with KEEP=1 to keep them)\n');
 }
 
-// ---------- helpers ----------
-function lanIP() {
-  const c = [];
-  for (const list of Object.values(os.networkInterfaces()))
-    for (const i of list || []) if (i.family === 'IPv4' && !i.internal) c.push(i.address);
-  return c.find((a) => a.startsWith('192.168.')) || c.find((a) => a.startsWith('10.')) ||
-    c.find((a) => /^172\.(1[6-9]|2\d|3[01])\./.test(a)) || c[0] || 'localhost';
+// ---------- network: which address phones should use, and which Wi-Fi that is ----------
+// Laptops often have extra virtual adapters (WSL, Hyper-V, VirtualBox, VPNs…) that a phone can't reach, so skip
+// those and prefer the adapter the default route goes through. Checked every 4 s: switching to a phone's hotspot
+// or another Wi-Fi just works, and the QR code and the HTTPS certificate follow along.
+const VIRTUAL = /vethernet|virtualbox|vmware|hyper-v|wsl|docker|vbox|vmnet|virbr|veth|^br-|tailscale|zerotier|wireguard|^wg\d|^utun|^tun|^tap|vpn|npcap|loopback|bluetooth|^ppp|^ham/i;
+const WIFI = /wi-?fi|wlan|wireless|^wl|^en0$|airport/i;
+const PHONE_SSID = /iphone|ipad|android|galaxy|pixel|redmi|xiaomi|poco|oneplus|oppo|vivo|realme|motorola|moto |huawei|honor|nokia|nothing|hotspot/i;
+let net = { ip: 'localhost', nets: [], ssid: {} }; // nets: [{ ip, iface, kind, ssid, hotspot }], primary first; ssid: adapter -> Wi-Fi name
+let httpsUp = false, httpsServer = null;
+const httpUrl = (ip) => 'http://' + (ip || net.ip) + ':' + HTTP_PORT;
+const httpsUrl = (ip) => 'https://' + (ip || net.ip) + ':' + HTTPS_PORT;
+
+function candidates() {
+  const out = [];
+  for (const [iface, list] of Object.entries(os.networkInterfaces()))
+    for (const i of list || [])
+      if (i.family === 'IPv4' && !i.internal && !i.address.startsWith('169.254.') && !VIRTUAL.test(iface)) out.push({ ip: i.address, iface });
+  return out;
 }
-const IP = lanIP();
-const HTTP_URL = 'http://' + IP + ':' + HTTP_PORT;
-const HTTPS_URL = 'https://' + IP + ':' + HTTPS_PORT;
-let httpsUp = false;
+// the local address of the default route (a UDP "connect" sends nothing; it just asks the OS which way it would go)
+function routeIP() {
+  return new Promise((resolve) => {
+    const s = require('dgram').createSocket('udp4');
+    const done = (ip) => { try { s.close(); } catch (e) {} resolve(ip); };
+    s.on('error', () => done(''));
+    try { s.connect(53, '1.1.1.1', () => { try { done(s.address().address); } catch (e) { done(''); } }); } catch (e) { done(''); }
+  });
+}
+// kind: wifi | wired. hotspot: 'phone' when this computer is on a phone's hotspot, 'pc' when it *is* the hotspot
+function describe(c) {
+  const ssid = net.ssid[c.iface] || '';
+  const kind = ssid || WIFI.test(c.iface) ? 'wifi' : 'wired';
+  const hotspot = c.ip === '192.168.137.1' ? 'pc' // Windows "Mobile hotspot"
+    : c.ip.startsWith('172.20.10.') || c.ip.startsWith('192.168.43.') || (ssid && PHONE_SSID.test(ssid)) ? 'phone' : '';
+  return { ip: c.ip, iface: c.iface, kind: hotspot === 'pc' ? 'wifi' : kind, ssid: hotspot === 'pc' ? '' : ssid, hotspot };
+}
+async function refreshNet(lookup) {
+  const list = candidates(), route = await routeIP();
+  const score = (c) => (c.ip === route ? 100 : 0) + (c.ip === '192.168.137.1' ? 0 : WIFI.test(c.iface) || net.ssid[c.iface] ? 20 : 10);
+  list.sort((a, b) => score(b) - score(a));
+  const sig = list.map((c) => c.iface + '=' + c.ip).join(',');
+  const changed = sig !== net.sig;
+  if (changed || lookup) await lookupSSIDs();
+  const nets = list.map(describe), before = JSON.stringify(net.nets);
+  net = Object.assign(net, { ip: nets.length ? nets[0].ip : 'localhost', nets, sig });
+  if (JSON.stringify(nets) === before) return false;
+  if (httpsServer) { try { ensureCert(true); } catch (e) {} }
+  return true;
+}
+net.nets = candidates().sort((a, b) => (WIFI.test(b.iface) ? 1 : 0) - (WIFI.test(a.iface) ? 1 : 0)).map(describe);
+net.ip = net.nets.length ? net.nets[0].ip : 'localhost';
+let netBusy = false;
+async function watchNet() {
+  if (netBusy) return;
+  netBusy = true;
+  try {
+    if (await refreshNet(Date.now() - (net.looked || 0) > 120000)) {
+      console.log('  Network changed       : ' + netLabel(net.nets[0]) + (net.nets.length ? ' · ' + httpUrl() : ''));
+      sendAll('net', netInfo());
+    }
+  } catch (e) {}
+  netBusy = false;
+}
+function netInfo() {
+  return { ip: net.ip, http: httpUrl(), https: httpsUp ? httpsUrl() : null,
+    nets: net.nets.map((n) => Object.assign({ http: httpUrl(n.ip), https: httpsUp ? httpsUrl(n.ip) : null }, n)) };
+}
+
+// Wi-Fi names, per adapter. Windows: the network profile name, which is the Wi-Fi name (unlike `netsh wlan`, it
+// doesn't need location permission on Windows 11 24H2+). macOS/Linux: best effort.
+function run(cmd, args) {
+  return new Promise((resolve) => {
+    try {
+      require('child_process').execFile(cmd, args, { timeout: 8000, windowsHide: true, encoding: 'utf8' }, (e, out) => resolve(e ? '' : String(out || '')));
+    } catch (e) { resolve(''); }
+  });
+}
+async function lookupSSIDs() {
+  const ssid = {};
+  net.looked = Date.now();
+  if (process.platform === 'win32') {
+    const out = await run('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+      '[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-NetConnectionProfile | ForEach-Object { $a = Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue; ' +
+      '$_.InterfaceAlias + [char]9 + $_.Name + [char]9 + $a.PhysicalMediaType }']);
+    for (const line of out.split(/\r?\n/)) {
+      const [iface, name, media] = line.split('\t');
+      if (iface && name && (media ? /802\.11|wireless/i.test(media) : WIFI.test(iface))) ssid[iface.trim()] = name.trim();
+    }
+  } else if (process.platform === 'darwin') {
+    for (const c of candidates()) {
+      const m = /^\s*SSID : (.+)$/m.exec(await run('/usr/sbin/ipconfig', ['getsummary', c.iface]));
+      if (m && !/redacted/i.test(m[1])) ssid[c.iface] = m[1].trim();
+    }
+  } else {
+    for (const line of (await run('nmcli', ['-t', '-f', 'DEVICE,TYPE,STATE,CONNECTION', 'device'])).split('\n')) {
+      const [dev, type, state, conn] = line.split(':');
+      if (type === 'wifi' && /^connected/.test(state || '') && conn) ssid[dev] = conn;
+    }
+  }
+  net.ssid = ssid;
+}
+function netLabel(n) {
+  if (!n) return 'no network';
+  if (n.hotspot === 'pc') return 'this computer’s hotspot';
+  return (n.kind === 'wifi' ? 'Wi-Fi' : 'wired network') + (n.ssid ? ' "' + n.ssid + '"' : '') + (n.hotspot === 'phone' ? ' (a phone’s hotspot)' : '');
+}
 
 const MIME = {
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
@@ -130,6 +226,8 @@ function listFiles() {
       thumb: fs.existsSync(path.join(THUMBS, name + '.jpg')),
       saved: savedBy.has(name) ? savedBy.get(name).size : 0,
       dur: metaOf(name).dur || 0,
+      from: (metaOf(name).from || {}).name || '', fromId: (metaOf(name).from || {}).id || '', // sent by a phone
+      got: gotOnPc.has(name), // downloaded to this computer
     });
   }
   return out.sort((a, b) => b.mtime - a.mtime || a.name.localeCompare(b.name));
@@ -142,8 +240,13 @@ function metaOf(name) {
   metaCache.set(name, m);
   return m;
 }
+function setMeta(name, patch) {
+  const m = Object.assign({}, metaOf(name), patch);
+  metaCache.set(name, m);
+  try { fs.writeFileSync(path.join(THUMBS, name + '.json'), JSON.stringify(m)); } catch (e) {}
+}
 function forget(name) {
-  savedBy.delete(name); metaCache.delete(name);
+  savedBy.delete(name); gotOnPc.delete(name); metaCache.delete(name);
   for (const ext of ['.jpg', '.json']) { try { fs.unlinkSync(path.join(THUMBS, name + ext)); } catch (e) {} }
 }
 const BIG_BUF = { highWaterMark: 1 << 20 }; // 1 MB chunks: much faster for big videos
@@ -167,6 +270,7 @@ function sendFile(req, res, file, type, extra) {
 // ---------- live updates (Server-Sent Events) ----------
 const clients = new Set();
 const savedBy = new Map(); // file name -> Set of phone ids that saved it
+const gotOnPc = new Set(); // names of files downloaded to this computer (what counts as "transferred" for a phone's files)
 const devices = new Map(); // phone id -> { id, name, conns, gone }
 function sendAll(ev, data) { const m = 'event: ' + ev + '\ndata: ' + JSON.stringify(data) + '\n\n'; for (const c of clients) c.write(m); }
 function sendLocal(ev, data) { const m = 'event: ' + ev + '\ndata: ' + JSON.stringify(data) + '\n\n'; for (const c of clients) if (c.local) c.write(m); }
@@ -211,12 +315,11 @@ function handler(req, res) {
     return res.end(page());
   }
   if (req.method === 'GET' && ICON_FILES[p]) {
-    res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' });
-    return res.end(ICON_FILES[p]);
+    res.writeHead(200, { 'Content-Type': ICON_FILES[p][1], 'Cache-Control': 'public, max-age=86400' });
+    return res.end(ICON_FILES[p][0]);
   }
   if (req.method === 'GET' && p === '/api/info') {
-    return json(res, 200, { host: HOST, ip: IP, http: HTTP_URL, https: httpsUp ? HTTPS_URL : null, app: APP, version: VERSION,
-      update: isLocal(req) ? updateInfo() : null });
+    return json(res, 200, Object.assign({ host: HOST, app: APP, version: VERSION, update: isLocal(req) ? updateInfo() : null }, netInfo()));
   }
   // only from PhoneDrop's own page on this computer: not phones on the Wi-Fi, not other websites open in a browser here
   if (req.method === 'POST' && p === '/api/update/install') {
@@ -276,7 +379,7 @@ function handler(req, res) {
   if (req.method === 'GET' && p === '/qr.svg') {
     try {
       res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-store' });
-      return res.end(qrSVG(q('u') || HTTP_URL));
+      return res.end(qrSVG(q('u') || httpUrl()));
     } catch (e) { return json(res, 500, { error: 'qr failed' }); }
   }
 
@@ -298,6 +401,8 @@ function handler(req, res) {
       if (failed) return;
       const final = uniqueName(name);
       try { fs.renameSync(tmp, path.join(DIR, final)); } catch (e) { fail(); return json(res, 500, { error: 'save failed' }); }
+      // remember which phone sent it: it isn't offered back to that phone, and the PC shows it as "from iPhone"
+      if (!isLocal(req)) setMeta(final, { from: { id: String(q('from') || '').slice(0, 40), name: String(q('fromName') || 'Phone').slice(0, 40) } });
       // when a thumbnail is on its way, hide the file until it arrives so the tile appears once, fully drawn
       if (q('thumb')) { pendingThumb.add(final); setTimeout(() => { pendingThumb.delete(final); bump(); }, 5000); }
       json(res, 200, { name: final });
@@ -314,7 +419,7 @@ function handler(req, res) {
     req.on('end', () => {
       if (len > 3 * 1048576) return json(res, 413, { error: 'too big' });
       const dur = parseFloat(q('dur'));
-      if (dur > 0) { const m = { dur }; metaCache.set(name, m); try { fs.writeFileSync(path.join(THUMBS, name + '.json'), JSON.stringify(m)); } catch (e) {} }
+      if (dur > 0) setMeta(name, { dur });
       const done = () => { pendingThumb.delete(name); json(res, 200, { ok: true }); bump(); };
       if (len) fs.writeFile(path.join(THUMBS, name + '.jpg'), Buffer.concat(chunks), done); else done();
     });
@@ -325,7 +430,7 @@ function handler(req, res) {
       try { fs.unlinkSync(path.join(DIR, f.name)); } catch (e) {}
       forget(f.name);
     }
-    savedBy.clear();
+    savedBy.clear(); gotOnPc.clear();
     bump();
     return json(res, 200, { ok: true });
   }
@@ -342,6 +447,11 @@ function handler(req, res) {
       bump();
       return json(res, 200, { ok: true });
     }
+    // a download to this computer that finished (all the way to the last byte) counts as transferred
+    if (q('dl') && req.method === 'GET' && isLocal(req)) res.on('finish', () => {
+      const r = /-(\d+)\/(\d+)$/.exec(String(res.getHeader('Content-Range') || ''));
+      if ((res.statusCode === 200 || (r && +r[1] === +r[2] - 1)) && !gotOnPc.has(name)) { gotOnPc.add(name); bump(); }
+    });
     return sendFile(req, res, file, mimeOf(name), {
       'Cache-Control': q('v') ? 'public, max-age=31536000, immutable' : 'no-cache',
       'Content-Disposition': (q('dl') ? 'attachment' : 'inline') + "; filename*=UTF-8''" + encodeURIComponent(name),
@@ -371,14 +481,14 @@ function utc(d) {
 function pem(label, buf) {
   return '-----BEGIN ' + label + '-----\n' + buf.toString('base64').match(/.{1,64}/g).join('\n') + '\n-----END ' + label + '-----\n';
 }
-function makeSelfSigned(ip) {
+function makeSelfSigned(ips) {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   const sigAlg = der(0x30, oid('1.2.840.113549.1.1.11'), der(0x05));
   const name = der(0x30, der(0x31, der(0x30, oid('2.5.4.3'), der(0x0c, Buffer.from('PhoneDrop')))));
   const now = Date.now();
   const ipb = (x) => Buffer.from(x.split('.').map(Number));
   const names = [der(0x82, Buffer.from('localhost')), der(0x87, ipb('127.0.0.1'))];
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(ip) && ip !== '127.0.0.1') names.push(der(0x87, ipb(ip)));
+  for (const ip of ips) if (/^\d+\.\d+\.\d+\.\d+$/.test(ip) && ip !== '127.0.0.1') names.push(der(0x87, ipb(ip)));
   const ext = (o, v, crit) => der(0x30, oid(o), ...(crit ? [der(0x01, Buffer.from([255]))] : []), der(0x04, v));
   const exts = der(0xa3, der(0x30,
     ext('2.5.29.19', der(0x30), true),
@@ -563,11 +673,11 @@ httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
   clearOld(updated);
   console.log('  Open on this computer : http://localhost:' + HTTP_PORT);
   console.log('  Shared folder         : ' + DIR + '\n');
-  startHttps();
   // just updated: the old window reloads itself once we're up, so only open one if it doesn't come back
   if (APP && updated) setTimeout(() => { if (!sawLocal) openWindow(); }, 5000);
   else if (APP) openWindow();
   ensureShortcut();
+  refreshNet(true).catch(() => {}).then(() => { startHttps(); setInterval(watchNet, 4000); });
   if (UPDATES) {
     setTimeout(() => { removeOldInstallers(); checkUpdate(); }, 10000);
     setInterval(checkUpdate, 6 * 3600000);
@@ -589,24 +699,37 @@ function ensureShortcut() {
     c.on('exit', (code) => { if (code === 0) { try { fs.writeFileSync(stamp, process.execPath); } catch (e) {} } });
   } catch (e) {}
 }
-function startHttps() {
-try {
+// The certificate lists every address PhoneDrop was reachable at lately (current ones first, up to 10), so going
+// back to a network used before keeps the same certificate and phones don't get the warning again.
+function ensureCert(swap) {
   fs.mkdirSync(CERT_DIR, { recursive: true });
-  const keyF = path.join(CERT_DIR, 'key.pem'), certF = path.join(CERT_DIR, 'cert.pem'), stamp = path.join(CERT_DIR, 'ip.txt');
-  const ok = fs.existsSync(stamp) && fs.readFileSync(stamp, 'utf8') === IP && fs.existsSync(keyF) && fs.existsSync(certF);
-  if (!ok) {
-    const c = makeSelfSigned(IP);
-    fs.writeFileSync(keyF, c.key); fs.writeFileSync(certF, c.cert); fs.writeFileSync(stamp, IP);
-  }
-  noLimits(https.createServer({ key: fs.readFileSync(keyF), cert: fs.readFileSync(certF) }, handler))
-    .on('error', (e) => { if (e.code === 'EADDRINUSE') portBusy(HTTPS_PORT); else console.log('  (Secure link error: ' + e.message + ')'); })
-    .listen(HTTPS_PORT, '0.0.0.0', () => {
-      httpsUp = true;
-      console.log('  Phone link (use this) : ' + HTTPS_URL);
-      console.log('  Plain link            : ' + HTTP_URL + '\n');
-    });
-} catch (e) {
-  console.log('  (Secure link unavailable: ' + String((e && e.message) || e).split('\n')[0] + ')');
-  console.log('  Phone link            : ' + HTTP_URL + '\n');
+  const keyF = path.join(CERT_DIR, 'key.pem'), certF = path.join(CERT_DIR, 'cert.pem'), ipsF = path.join(CERT_DIR, 'ips.json');
+  let ips = [];
+  try { ips = JSON.parse(fs.readFileSync(ipsF, 'utf8')); } catch (e) {}
+  const now = net.nets.map((n) => n.ip);
+  if (now.every((ip) => ips.includes(ip)) && fs.existsSync(keyF) && fs.existsSync(certF))
+    return { key: fs.readFileSync(keyF), cert: fs.readFileSync(certF) };
+  ips = now.concat(ips.filter((ip) => !now.includes(ip))).slice(0, 10);
+  const c = makeSelfSigned(ips);
+  fs.writeFileSync(keyF, c.key); fs.writeFileSync(certF, c.cert); fs.writeFileSync(ipsF, JSON.stringify(ips));
+  fs.rm(path.join(CERT_DIR, 'ip.txt'), { force: true }, () => {}); // from older versions
+  if (swap && httpsServer) httpsServer.setSecureContext({ key: c.key, cert: c.cert });
+  return c;
 }
+function printLinks() {
+  console.log('  Network               : ' + netLabel(net.nets[0]));
+  if (httpsUp) console.log('  iPhone link           : ' + httpsUrl());
+  console.log('  Android / other phones: ' + httpUrl() + '\n');
+  sendAll('net', netInfo());
+}
+function startHttps() {
+  try {
+    const c = ensureCert(false);
+    httpsServer = noLimits(https.createServer({ key: c.key, cert: c.cert }, handler))
+      .on('error', (e) => { if (e.code === 'EADDRINUSE') portBusy(HTTPS_PORT); else console.log('  (Secure link error: ' + e.message + ')'); })
+      .listen(HTTPS_PORT, '0.0.0.0', () => { httpsUp = true; printLinks(); });
+  } catch (e) {
+    console.log('  (Secure link unavailable: ' + String((e && e.message) || e).split('\n')[0] + ')');
+    printLinks();
+  }
 }
