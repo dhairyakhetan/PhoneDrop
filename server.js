@@ -630,29 +630,50 @@ async function installUpdate() {
     console.log('  Update failed: ' + u.error);
     return sendLocal('update', updateInfo());
   }
-  // Start-Process, not spawn(): the installer needs admin, and only the shell can show Windows' "allow changes?" prompt.
-  // PowerShell exits 1 when that prompt is answered No.
+  // Hand over to a small hidden PowerShell helper that outlives PhoneDrop:
+  // - it runs the installer with Start-Process, not spawn(): the installer needs admin, and only the shell can show
+  //   Windows' "allow changes?" prompt. Answered No -> it exits 1 and PhoneDrop carries on ("cancelled").
+  // - Yes -> it writes updated.txt (our cue to step aside; the installer closes PhoneDrop anyway) and waits for the
+  //   installer, which reopens PhoneDrop. If PhoneDrop still isn't running 10 s after the installer finished, the
+  //   helper starts it (as this user, not as admin). Each update adds a line to update-log.txt, so if one ever goes
+  //   wrong there's something to look at.
   u.state = 'installing';
   sendLocal('update', updateInfo());
+  try { fs.unlinkSync(UPDATED_FLAG); } catch (e) {}
+  const v = psq(u.version);
+  const ps = [
+    'try { $p = Start-Process -FilePath ' + psq(file) + " -ArgumentList '/S' -PassThru -ErrorAction Stop } catch { exit 1 }",
+    'try { Set-Content -LiteralPath ' + psq(UPDATED_FLAG) + ' -Value ' + v + ' } catch {}',
+    '$t = 0; while ((Get-Process -Id $p.Id -ErrorAction SilentlyContinue) -and $t -lt 600) { Start-Sleep -Milliseconds 500; $t++ }',
+    '$code = "unknown"; try { $code = $p.ExitCode } catch {}',
+    'Start-Sleep -Seconds 10',
+    '$up = [bool](Get-Process -Name PhoneDrop -ErrorAction SilentlyContinue)',
+    'if (-not $up) { try { Start-Process -FilePath ' + psq(process.execPath) + ' } catch {} }',
+    'try { Add-Content -LiteralPath ' + psq(path.join(BASE, 'update-log.txt')) + ' -Value ((Get-Date -Format s) + " update to " + ' + v +
+      ' + ": installer exit code " + $code + $(if ($up) { ", PhoneDrop reopened" } else { ", PhoneDrop was not running, started it" })) } catch {}',
+    'exit 0',
+  ].join('; ');
   let done = false;
-  const launched = (code) => {
+  const handedOver = () => {
     if (done) return; done = true;
-    if (code !== 0) {
-      u.state = code === 1 ? 'cancelled' : 'failed'; u.error = code === 1 ? '' : 'the installer didn’t start';
-      return sendLocal('update', updateInfo());
-    }
+    clearInterval(watch);
     u.state = 'restarting';
     sendLocal('update', updateInfo());
-    try { fs.writeFileSync(UPDATED_FLAG, u.version); } catch (e) {}
     console.log('  Installing PhoneDrop ' + u.version + '. It reopens by itself.');
     setTimeout(() => process.exit(0), 1000);
   };
-  const ps = 'try { Start-Process -FilePath ' + psq(file) + " -ArgumentList '/S' -ErrorAction Stop; exit 0 } catch { exit 1 }";
+  const ended = (code) => { // the helper ended before the installer started
+    if (done) return; done = true;
+    clearInterval(watch);
+    u.state = code === 1 ? 'cancelled' : 'failed'; u.error = code === 1 ? '' : 'the installer didn’t start';
+    sendLocal('update', updateInfo());
+  };
+  const watch = setInterval(() => { if (fs.existsSync(UPDATED_FLAG)) handedOver(); }, 250);
   try {
     const c = spawn('powershell', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', ps], { detached: true, windowsHide: true, stdio: 'ignore' });
-    c.on('error', () => launched(-1));
-    c.on('exit', (code) => launched(code));
-  } catch (e) { launched(-1); }
+    c.on('error', () => ended(-1));
+    c.on('exit', (code) => (fs.existsSync(UPDATED_FLAG) ? handedOver() : ended(code)));
+  } catch (e) { ended(-1); }
 }
 
 // ---------- start ----------

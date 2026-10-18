@@ -96,10 +96,53 @@ Function LaunchApp
   Exec '"$WINDIR\explorer.exe" "$INSTDIR\PhoneDrop.exe"'
 FunctionEnd
 
+; $R0 = 1 if PhoneDrop.exe is running, else 0 (find exits 0 when it's in the process list; this installer's own
+; name, PhoneDrop-Setup-….exe, doesn't contain "PhoneDrop.exe")
+Function IsAppRunning
+  nsExec::Exec '"$SYSDIR\cmd.exe" /c tasklist /NH | find "PhoneDrop.exe"'
+  Pop $R0
+  ${If} $R0 == 0
+    StrCpy $R0 1
+  ${Else}
+    StrCpy $R0 0
+  ${EndIf}
+FunctionEnd
+
+; close PhoneDrop and wait until it's really gone (Windows keeps a running program's file locked), at most 10 s
+Function CloseApp
+  StrCpy $R1 0
+  ${Do}
+    nsExec::Exec 'taskkill /F /IM PhoneDrop.exe'
+    Call IsAppRunning
+    ${If} $R0 == 0
+    ${OrIf} $R1 >= 20
+      ${ExitDo}
+    ${EndIf}
+    Sleep 500
+    IntOp $R1 $R1 + 1
+  ${Loop}
+FunctionEnd
+
 ; PhoneDrop's in-app updater runs "PhoneDrop-Setup.exe /S" (silent, no pages): open PhoneDrop again afterwards.
+; The explorer.exe hand-off (un-elevated) isn't guaranteed on every PC, so if PhoneDrop isn't running 15 s later,
+; start it directly. That copy runs as admin (drag & drop from Explorer won't work until its next start), but at
+; least the update never leaves you without PhoneDrop.
 Function .onInstSuccess
   ${If} ${Silent}
     Call LaunchApp
+    StrCpy $R1 0
+    ${Do}
+      Sleep 500
+      Call IsAppRunning
+      ${If} $R0 == 1
+        ${ExitDo}
+      ${EndIf}
+      IntOp $R1 $R1 + 1
+      ${If} $R1 >= 30
+        Exec '"$INSTDIR\PhoneDrop.exe"'
+        ${ExitDo}
+      ${EndIf}
+    ${Loop}
   ${EndIf}
 FunctionEnd
 
@@ -108,11 +151,15 @@ Section "PhoneDrop" SecApp
   SectionIn RO
 
   ; close a running copy so it can be updated
-  nsExec::Exec 'taskkill /F /IM PhoneDrop.exe'
-  Sleep 600
+  Call CloseApp
 
   SetOutPath "$INSTDIR"
+  ; a file that's still locked can be renamed but not overwritten: move the old one aside first, so writing the new
+  ; one can't fail (during a silent update nobody would see the error box, and the update would just hang)
+  Delete "$INSTDIR\PhoneDrop.old"
+  Rename "$INSTDIR\PhoneDrop.exe" "$INSTDIR\PhoneDrop.old"
   File "..\dist\PhoneDrop.exe"
+  Delete /REBOOTOK "$INSTDIR\PhoneDrop.old"
   FileOpen $0 "$INSTDIR\installed.txt" w
   FileWrite $0 "Installed by PhoneDrop Setup ${VERSION}"
   FileClose $0
@@ -164,7 +211,7 @@ SectionEnd
 ; ---------- uninstall ----------
 Section "Uninstall"
   nsExec::Exec 'taskkill /F /IM PhoneDrop.exe'
-  Sleep 600
+  Sleep 1000
 
   SetShellVarContext all
   Delete "$SMPROGRAMS\PhoneDrop.lnk"
@@ -177,6 +224,7 @@ Section "Uninstall"
   nsExec::Exec 'netsh advfirewall firewall delete rule name="PhoneDrop"'
 
   Delete "$INSTDIR\PhoneDrop.exe"
+  Delete "$INSTDIR\PhoneDrop.old"
   Delete "$INSTDIR\installed.txt"
   Delete "$INSTDIR\Uninstall PhoneDrop.exe"
   RMDir "$INSTDIR"

@@ -1315,7 +1315,7 @@ $('clearBtn').onclick = function(){
 
 /* ================= update banner (installed PhoneDrop, on this PC only) ================= */
 // The server checks GitHub for a newer stable release and tells this page (never phones) via /api/info and SSE.
-var upd = null, updGot = 0, updMeter = new Meter(), updPoll = 0;
+var upd = null, updGot = 0, updMeter = new Meter(), updPoll = 0, updDown = 0, updStuck = false;
 var skipUpd = ''; try { skipUpd = localStorage.getItem('pd.skipUpdate') || ''; } catch (e) {}
 function newer(a, b){
   a = String(a).split('.'); b = String(b).split('.');
@@ -1335,7 +1335,8 @@ function setUpdate(u){
   if (isMobile) return;
   if (u && u.state === 'downloading' && (!upd || upd.state !== 'downloading')) { updGot = 0; updMeter = new Meter(); }
   upd = u || null;
-  if (upd && upd.state === 'restarting') waitForRestart();
+  if (upd && (upd.state === 'installing' || upd.state === 'restarting')) waitForRestart();
+  else { clearInterval(updPoll); updPoll = 0; updStuck = false; }
   renderUpdate();
 }
 function updProgress(p){
@@ -1363,9 +1364,10 @@ function renderUpdate(){
   else if (s === 'cancelled') { t = 'Update cancelled'; sub = 'Windows needs your permission to install it. Click Yes when it asks.'; }
   else if (s === 'failed') { t = 'Update failed'; sub = 'Something went wrong: ' + (upd.error || 'unknown error') + '.'; }
   else { t = 'PhoneDrop ' + upd.version + ' is available'; sub = (info ? 'You have ' + info.version + '. ' : '') + 'Updating takes about a minute.'; }
+  if (updStuck && busy) { icon = IC.info; t = 'PhoneDrop didn’t reopen by itself'; sub = 'Open PhoneDrop from the Start Menu to finish. You can close this window.'; }
   var ic = $('updIc'); if (ic._icon !== icon) { ic.innerHTML = icon; ic._icon = icon; }
   $('updT').textContent = t; $('updS').textContent = sub;
-  $('upd').classList.toggle('err', s === 'failed' || s === 'cancelled');
+  $('upd').classList.toggle('err', s === 'failed' || s === 'cancelled' || (updStuck && busy));
   $('updBar').hidden = s !== 'downloading';
   $('updMan').hidden = s !== 'failed'; $('updMan').href = upd.page || '#';
   $('updNotes').hidden = !!s || !upd.notes;
@@ -1379,14 +1381,19 @@ function startUpdate(){
     upd.state = 'failed'; upd.error = 'PhoneDrop couldn’t start the download'; renderUpdate();
   });
 }
-// the installer closes PhoneDrop and starts the new version: reload this window as soon as it's back
-// (only the old copy, just before it quits, still says "restarting")
+// the installer closes PhoneDrop and starts the new version: reload this window as soon as it's back (only the old
+// copy still says installing/restarting). If nothing answers for a minute, say so instead of spinning forever.
 function waitForRestart(){
   if (updPoll) return;
+  updDown = 0;
   updPoll = setInterval(function(){
     fetch('/api/info', { cache: 'no-store' }).then(function(r){ return r.json(); }).then(function(i){
-      if (!i.update || i.update.state !== 'restarting') location.reload();
-    }, function(){});
+      updDown = 0;
+      if (!i.update || (i.update.state !== 'installing' && i.update.state !== 'restarting')) location.reload();
+    }, function(){
+      if (!updDown) updDown = Date.now();
+      if (!updStuck && Date.now() - updDown > 60000) { updStuck = true; renderUpdate(); }
+    });
   }, 1500);
 }
 $('updGo').onclick = startUpdate;
