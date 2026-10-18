@@ -1,0 +1,17 @@
+# dependencies & build output
+node_modules/
+dist/
+.cache/
+*.exe
+*.blob
+
+# created when PhoneDrop runs from the repo
+shared/
+.certs/
+error-log.txt
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/

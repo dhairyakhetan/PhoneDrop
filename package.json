@@ -1,0 +1,20 @@
+{
+  "name": "phonedrop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Send photos, videos and files from your PC to your phone over Wi-Fi",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "app": "node server.js --app",
+    "dev": "node --watch server.js",
+    "build": "node scripts/build.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "postject": "1.0.0-alpha.6",
+    "resedit": "2.0.2"
+  }
+}
