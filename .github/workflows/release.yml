@@ -1,0 +1,90 @@
+# Builds PhoneDrop-Setup.exe on every push to main and publishes it as the newest GitHub release,
+# replacing the previous one. This download link always gets the newest installer:
+#   https://github.com/dhairyakhetan/PhoneDrop/releases/latest/download/PhoneDrop-Setup.exe
+# Run it by hand from the Actions tab: Release -> Run workflow.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md'] # doc-only changes don't make a new release
+  workflow_dispatch:
+
+permissions:
+  contents: write # create and delete releases
+
+# one release at a time, so two quick pushes can't delete each other's release
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  # shown in the release title ("PhoneDrop 1.0.7 alpha") and notes. Set to '' once PhoneDrop is stable.
+  CHANNEL: alpha
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          architecture: x64
+          cache: npm
+
+      - run: npm ci
+
+      - name: Make sure NSIS is installed
+        run: |
+          if [ ! -f "/c/Program Files (x86)/NSIS/makensis.exe" ] && [ ! -f "/c/Program Files/NSIS/makensis.exe" ]; then
+            choco install nsis -y --no-progress
+          fi
+
+      # MAJOR.MINOR from package.json + PATCH = run number (e.g. 1.0.57): every build is newer than the last.
+      # Not committed back; bump MAJOR/MINOR in package.json by hand for big releases.
+      - name: Set version
+        run: |
+          v=$(node -p "require('./package.json').version.split('.').slice(0, 2).join('.')").${{ github.run_number }}
+          npm version "$v" --no-git-tag-version --allow-same-version
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+
+      - run: npm run build
+
+      - name: Checksum
+        run: |
+          test -f dist/PhoneDrop-Setup.exe # build.mjs skips the installer when NSIS is missing
+          sha256sum dist/PhoneDrop-Setup.exe | cut -c1-64 > dist/PhoneDrop-Setup.exe.sha256
+          cat dist/PhoneDrop-Setup.exe.sha256
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="PhoneDrop $VERSION"
+          {
+            if [ -n "$CHANNEL" ]; then
+              title="$title $CHANNEL"
+              printf '**This is an %s version**: an early test build. It works, but expect rough edges.\n\n' "$CHANNEL"
+            fi
+            cat .github/release-notes.md
+            printf '\nBuilt from %s\n' "$(git log -1 --pretty='%h: %s')"
+          } > dist/notes.md
+          gh release create "v$VERSION" dist/PhoneDrop-Setup.exe dist/PhoneDrop-Setup.exe.sha256 \
+            --title "$title" --notes-file dist/notes.md --target "$GITHUB_SHA" --latest
+
+      - name: Delete older releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for tag in $(gh release list --limit 100 --json tagName --jq '.[].tagName'); do
+            if [ "$tag" != "v$VERSION" ]; then
+              echo "Deleting $tag"
+              gh release delete "$tag" --cleanup-tag --yes
+            fi
+          done

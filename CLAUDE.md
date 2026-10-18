@@ -15,7 +15,7 @@ Main users: a Windows laptop + family iPhones. The owner is learning to program,
 - **No CDNs / internet at runtime.** The phone is on a LAN and may have no internet. Everything (QR code, icons, page) is served by `server.js`.
 - **The page is one self-contained file**: `public/index.html` (HTML + `<style>` + one `<script>`). No framework, no bundler. The script is written in plain ES5-style JS (`var`, `function`, no optional chaining) so older iOS Safari keeps working — keep that style.
 - **Never re-encode user files.** Uploads are streamed to disk byte-for-byte; downloads/shares send the original bytes. This is what keeps photo metadata intact. Verify with SHA-256 when touching the transfer path.
-- **No `.exe` or build output in git** (`dist/`, `.cache/`, `node_modules/`, `*.exe` are gitignored). Releases are built by CI (see "Planned work").
+- **No `.exe` or build output in git** (`dist/`, `.cache/`, `node_modules/`, `*.exe` are gitignored). Releases are built by CI (`.github/workflows/release.yml`).
 - If you add a file that `server.js` reads, read it through `asset()` **and** add it to `ASSETS` in `scripts/build.mjs`, or the .exe will crash.
 
 ## Repo layout
@@ -33,6 +33,8 @@ installer/wizard.bmp      164x314 side image for Welcome/Finish pages
 installer/header.bmp      150x57 header image for inner pages
 scripts/build.mjs         builds dist/PhoneDrop.exe + dist/PhoneDrop-Setup.exe
 package.json              version number lives here (used by server, exe metadata and installer)
+.github/workflows/release.yml  CI: builds the installer on every push to main and replaces the GitHub release
+.github/release-notes.md  text shown on each release page (the workflow adds the alpha line and commit)
 ```
 
 Runtime folders created next to `server.js` when run from the repo (gitignored): `shared/` (the shared files, `shared/.thumbs/` for thumbnails + `<name>.json` metadata) and `.certs/` (self-signed HTTPS cert). When running as the installed .exe these live in `%LOCALAPPDATA%\PhoneDrop\` instead.
@@ -140,14 +142,17 @@ There are no automated tests in the repo yet. What has been used to verify chang
 
 Real-device checks still matter: share sheet on a real iPhone, Windows firewall, installer UAC/SmartScreen.
 
-## Planned work (not done yet — implement these)
+## Planned work
 
-### 0. Put the repo on GitHub (first)
+### 0. Put the repo on GitHub (first) — done
+Repo: `dhairyakhetan/PhoneDrop`, default branch `main`. Kept for reference:
 - `git init -b main`, commit everything, then create the GitHub repo and push (`gh repo create phonedrop --public --source . --push`, or via github.com). It should be **public**: the in-app updater reads releases without a token, and the README download link must work for anyone.
 - Replace `YOUR-USERNAME` in `README.md` with the real GitHub username, and add `"repository": "github:<owner>/phonedrop"` to `package.json`.
 - `package-lock.json` is committed so CI can use `npm ci`.
 
-### 1. CI: build the installer on every push and replace the previous release
+### 1. CI: build the installer on every push and replace the previous release — done
+
+Implemented in `.github/workflows/release.yml` (bash steps on `windows-latest`). Releases are titled "PhoneDrop <version> alpha" while `CHANNEL: alpha` is set in the workflow; set it to `''` once PhoneDrop is stable. The original spec, kept for reference:
 
 Create `.github/workflows/release.yml`:
 - Trigger: `push` to `main` (add `paths-ignore: ['**.md']` so doc-only commits don't release) and `workflow_dispatch`.
@@ -157,7 +162,7 @@ Create `.github/workflows/release.yml`:
 - **Publish**: create GitHub Release `v<version>` with `dist/PhoneDrop-Setup.exe` (+ a `PhoneDrop-Setup.exe.sha256` file containing the hex SHA-256), marked latest, using `gh release create` with `GITHUB_TOKEN`. Then delete older releases and their tags so only the newest `PhoneDrop-Setup.exe` remains ("rewrites the previous one"). The stable download link is always `https://github.com/<owner>/<repo>/releases/latest/download/PhoneDrop-Setup.exe` — put it in README.
 - Do not attach `PhoneDrop.exe` separately unless asked; the setup is the deliverable.
 
-### 2. In-app updates ("Update available" banner)
+### 2. In-app updates ("Update available" banner) — not done yet
 
 Goal: an installed PhoneDrop notices a newer GitHub release and offers to update with one click; the update runs through the installer.
 
