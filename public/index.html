@@ -75,7 +75,7 @@ button:focus-visible,a:focus-visible,label:focus-visible{outline:2px solid var(-
 .bar-in{max-width:1240px;margin:0 auto;height:58px;display:flex;align-items:center;gap:12px;padding:0 20px}
 .brand{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
 .bar-acts{display:flex;align-items:center;gap:8px;flex:none}
-@media (max-width:760px){#phonesBtn span{display:none}#phonesBtn{width:36px;padding:0;justify-content:center}}
+@media (max-width:760px){#phonesBtn span,#textBtn span{display:none}#phonesBtn,#textBtn{width:36px;padding:0;justify-content:center}}
 .logo{width:34px;height:34px;flex:none;display:block}
 .brand-t{min-width:0}
 .brand-t b{display:block;font-size:16px;letter-spacing:-.01em}
@@ -173,6 +173,22 @@ button:focus-visible,a:focus-visible,label:focus-visible{outline:2px solid var(-
 .tile img.ok,.tile video.ok{opacity:1}
 .face{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:10px;text-align:center}
 .face .ext{font-weight:800;font-size:15px;letter-spacing:.04em;color:var(--acc);background:var(--acc-soft);padding:6px 10px;border-radius:8px}
+.notec{position:absolute;inset:0;padding:12px 12px 10px;background:var(--surface2);display:flex;flex-direction:column;gap:6px;text-align:left}
+.notec .nt{flex:1;min-height:0;font-size:13px;line-height:1.38;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;overflow:hidden;
+  display:-webkit-box;-webkit-line-clamp:7;-webkit-box-orient:vertical}
+.notec .nk{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--acc)}
+.notec .nk svg.i{width:14px;height:14px}
+.notec.link .nt{color:var(--acc);-webkit-line-clamp:4}
+.mobile .notec{padding:8px 8px 6px;gap:4px}
+.mobile .notec .nt{font-size:12px;line-height:1.3}
+.notefull{white-space:pre-wrap;overflow-wrap:anywhere;max-height:min(50vh,420px);overflow:auto;-webkit-user-select:text;user-select:text;font-size:15px;line-height:1.45;
+  background:var(--surface2);padding:12px 14px;border-radius:12px;margin:0 0 4px}
+.notefull a{color:var(--acc);text-decoration:underline}
+.textbox{width:100%;min-height:150px;max-height:50vh;resize:vertical;box-sizing:border-box;padding:12px 14px;border-radius:12px;border:1px solid var(--line2);
+  background:var(--surface2);color:var(--text);font:inherit;font-size:16px;line-height:1.4}
+.textbox:focus{outline:2px solid var(--acc);outline-offset:1px}
+.toast.act{pointer-events:auto;display:flex;align-items:center;gap:12px;padding:6px 6px 6px 16px}
+.toast .tb{background:rgba(255,255,255,.16);color:#fff;border-radius:999px;padding:6px 12px;font-weight:700;font-size:13px}
 .face .nm{font-size:12px;color:var(--mute);line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
 .vid{position:absolute;left:7px;bottom:7px;display:flex;align-items:center;gap:4px;color:#fff;font-size:11px;font-weight:700;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));pointer-events:none}
 .vid svg.i{width:14px;height:14px}
@@ -455,7 +471,7 @@ button:focus-visible,a:focus-visible,label:focus-visible{outline:2px solid var(-
 .prow .pt b{display:block;font-size:15px}
 .prow .pt span{display:block;font-size:13px;color:var(--mute)}
 .prow .on{color:var(--ok)}
-body.unpaired .wrap,body.unpaired #dock,body.unpaired #selBtn,body.unpaired #phonesBtn,body.unpaired #secure,body.unpaired #lost{display:none!important}
+body.unpaired .wrap,body.unpaired #dock,body.unpaired #selBtn,body.unpaired #phonesBtn,body.unpaired #textBtn,body.unpaired #secure,body.unpaired #lost{display:none!important}
 .pairscr{max-width:440px;margin:32px auto;padding:0 16px;text-align:center}
 .pairscr .card{padding:30px 22px 22px}
 .pairscr .ps-logo{width:64px;height:64px;display:block;margin:0 auto}
@@ -473,7 +489,7 @@ body.unpaired .wrap,body.unpaired #dock,body.unpaired #selBtn,body.unpaired #pho
     <img class="logo" src="/icon.svg" alt="">
     <div class="brand-t"><b>PhoneDrop</b><span id="sub"><i class="live off" id="live"></i>Connecting…</span></div>
   </div>
-  <div class="bar-acts"><button class="btn sm ghost desk-only" id="phonesBtn" hidden></button><button class="btn sm tint" id="selBtn" hidden>Select</button></div>
+  <div class="bar-acts"><button class="btn sm ghost desk-only" id="textBtn"></button><button class="btn sm ghost desk-only" id="phonesBtn" hidden></button><button class="btn sm tint" id="selBtn" hidden>Select</button></div>
 </div></header>
 
 <!-- a phone that isn't paired yet (or was removed on the computer) sees only this -->
@@ -570,6 +586,7 @@ body.unpaired .wrap,body.unpaired #dock,body.unpaired #selBtn,body.unpaired #pho
     <span class="txt"><span class="t1" id="t1">Save all to Photos</span><span class="t2" id="t2" hidden></span></span>
   </button>
   <button class="sq" id="cancelBtn" aria-label="Cancel download" hidden><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  <button class="sq" id="textSend" aria-label="Send text to computer"><svg class="i" viewBox="0 0 24 24"><path d="M5 6h14M5 11h14M5 16h9"/></svg></button>
   <button class="sq" id="sendBtn" aria-label="Send files to computer"><svg class="i" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg></button>
   <button class="sq danger" id="delBtn" aria-label="Delete selected" hidden><svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button>
 </div></div>
@@ -675,6 +692,8 @@ var IC = {
   cable: '<svg class="i" viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0z"/><path d="M12 17v4"/></svg>',
   update: '<svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66L20 8.5"/><path d="M20 3.5v5h-5"/></svg>',
   phone: '<svg class="i" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18h2"/></svg>',
+  text: '<svg class="i" viewBox="0 0 24 24"><path d="M5 6h14M5 11h14M5 16h9"/></svg>',
+  link: '<svg class="i" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg>',
   spin: '<svg class="i" viewBox="0 0 24 24" style="animation:sp 1s linear infinite"><path d="M12 3a9 9 0 1 0 9 9"/></svg>'
 };
 var st = document.createElement('style'); st.textContent = '@keyframes sp{to{transform:rotate(360deg)}}'; document.head.appendChild(st);
@@ -702,7 +721,34 @@ function noun(list){
   return list.length === 1 ? 'item' : 'items';
 }
 var toastT;
-function toast(t){ var e = $('toast'); e.textContent = t; e.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(function(){ e.classList.remove('show'); }, 2600); }
+// toast(text) or toast(text, { label, run }): with a button (e.g. Copy) it stays up a little longer
+function toast(t, act){
+  var e = $('toast'); e.textContent = t;
+  e.classList.toggle('act', !!act);
+  if (act) { var b = document.createElement('button'); b.className = 'tb'; b.textContent = act.label; b.onclick = function(){ act.run(); e.classList.remove('show'); }; e.appendChild(b); }
+  e.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(function(){ e.classList.remove('show'); }, act ? 6000 : 2600);
+}
+// notes: text or a link sent from the other side. Their text comes from a phone, so it's never put on the page
+// as HTML: it's escaped, and only http(s) links become links.
+function isNote(f){ return !!f.note; }
+function singleLink(t){ t = String(t).trim(); return /^https?:\/\/\S+$/i.test(t) ? t : ''; }
+function linkify(t){
+  var out = '', last = 0, re = /https?:\/\/[^\s<>"']+/gi, m;
+  while ((m = re.exec(t))) {
+    var u = m[0].replace(/[.,;:!?)\]]+$/, '');
+    out += esc(t.slice(last, m.index)) + '<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + esc(u) + '</a>';
+    last = m.index + u.length; re.lastIndex = last;
+  }
+  return out + esc(t.slice(last));
+}
+function copyText(t){
+  function ok(){ toast('Copied'); }
+  function fallback(){
+    var a = document.createElement('textarea'); a.value = t; a.setAttribute('readonly', ''); a.style.position = 'fixed'; a.style.opacity = '0';
+    document.body.appendChild(a); a.select(); try { document.execCommand('copy'); ok(); } catch (e) { toast('Couldn’t copy'); } a.remove();
+  }
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(t).then(ok, fallback); else fallback();
+}
 // icon + label, only touched when it changes (keeps hover states and avoids flicker)
 function setBtn(b, icon, label){ var h = icon + '<span>' + esc(label) + '</span>'; if (b._h !== h) { b.innerHTML = h; b._h = h; } }
 function vibrate(){ try { navigator.vibrate && navigator.vibrate(10); } catch (e) {} }
@@ -711,7 +757,8 @@ var saved = {};
 try { saved = JSON.parse(localStorage.getItem('pd.saved') || '{}') || {}; } catch (e) {}
 function persistSaved(){ try { localStorage.setItem('pd.saved', JSON.stringify(saved)); } catch (e) {} }
 
-// sheet({ title, text | html, actions: [{ label, cls }] }) -> index of the tapped action, or -1 when dismissed
+// sheet({ title, text | html, actions: [{ label, cls, run }] }) -> index of the tapped action, or -1 when dismissed.
+// run() is called inside the click (copying and opening tabs need that); returning false keeps the sheet open.
 var sheetDone = null;
 function sheet(o){
   return new Promise(function(res){
@@ -721,7 +768,7 @@ function sheet(o){
     var row = $('mRow'); row.innerHTML = ''; row.className = 'row' + (o.actions.length > 2 ? ' col' : '');
     o.actions.forEach(function(a, i){
       var b = document.createElement('button'); b.className = 'btn ' + (a.cls || ''); b.textContent = a.label;
-      b.onclick = function(e){ e.stopPropagation(); done(i); };
+      b.onclick = function(e){ e.stopPropagation(); if (a.run && a.run() === false) return; done(i); };
       row.appendChild(b);
     });
     $('modal').hidden = false;
@@ -963,9 +1010,11 @@ function load(){
     lastJSON = t;
     files = JSON.parse(t);
     byName = {}; files.forEach(function(f){ byName[f.name] = f; });
-    if (!isMobile && seen) {   // "iPhone sent 3 files"
-      var by = {}; files.forEach(function(f){ if (f.from && !seen[f.name]) by[f.from] = (by[f.from] || 0) + 1; });
+    if (!isMobile && seen) {   // "iPhone sent 3 files", "iPhone sent a link · Copy"
+      var by = {}, note = null;
+      files.forEach(function(f){ if (f.from && !seen[f.name]) { if (f.note) note = f; else by[f.from] = (by[f.from] || 0) + 1; } });
       for (var w in by) toast(w + ' sent ' + plural(by[w], 'file') + ' · Download from phone keeps them');
+      if (note) noteToast(note);
     }
     seen = {}; files.forEach(function(f){ seen[f.name] = 1; });
     if (files.length) { var live = {}; files.forEach(function(f){ live[key(f)] = 1; }); for (var k in saved) if (!live[k]) delete saved[k]; persistSaved(); }
@@ -1027,8 +1076,16 @@ function face(f, big){
   w.appendChild(e); w.appendChild(n); return w;
 }
 function paintTile(d, f){
-  var m = d.firstChild, src = f.thumb ? thumbUrl(f) : showable(f) ? fileUrl(f) : null;
-  if (src) {
+  var m = d.firstChild, src = f.note ? null : f.thumb ? thumbUrl(f) : showable(f) ? fileUrl(f) : null;
+  if (f.note) {
+    if (!m.firstChild) {
+      var link = singleLink(f.preview), c = document.createElement('div'), k = document.createElement('span'), tx = document.createElement('span');
+      c.className = 'notec' + (link ? ' link' : ''); k.className = 'nk'; tx.className = 'nt';
+      k.innerHTML = (link ? IC.link : IC.text) + '<span></span>'; k.lastChild.textContent = link ? 'Link' : 'Note';
+      tx.textContent = f.preview;   // plain text, never HTML
+      c.appendChild(k); c.appendChild(tx); m.appendChild(c);
+    }
+  } else if (src) {
     var img = m.querySelector('img');
     if (!img) {
       m.textContent = '';
@@ -1070,7 +1127,7 @@ function reconcile(){
   for (var k in nodes) if (!keep[k]) { nodes[k].remove(); delete nodes[k]; sel.delete(k); }
   [].slice.call($('pgrid').children).forEach(function(t){ if (t._final && byName[t._final]) removePending(t); });
   if (!files.length && selecting) selecting = false;
-  if (!$('lb').hidden) { var cur = lbList[lbIdx]; lbList = files.slice(); if (cur && !byName[cur.name]) closeLb(); }
+  if (!$('lb').hidden) { var cur = lbList[lbIdx]; lbList = files.filter(function(f){ return !f.note; }); if (cur && !byName[cur.name]) closeLb(); }
   renderChrome();
 }
 
@@ -1104,7 +1161,7 @@ function renderChrome(){
     $('slim').hidden = !connected || showQR;
     $('heroHide').hidden = !connected;
     if (connected) $('slimT').textContent = others.length === 1 ? others[0].name + ' connected' : others.length + ' phones connected';
-    var nSaved = files.filter(doneOnPc).length, nIn = files.filter(function(f){ return f.from && !f.got; }).length;
+    var nSaved = files.filter(doneOnPc).length, nIn = files.filter(function(f){ return f.from && !f.got && !f.note; }).length;
     $('clearSaved').hidden = !nSaved || selecting;
     setBtn($('clearSaved'), IC.broom, 'Remove saved (' + nSaved + ')');
     $('getBtn').hidden = !nIn || selecting;
@@ -1153,7 +1210,7 @@ $('clearSaved').onclick = function(){
   deleteNames(l, 'Remove ' + plural(l.length, 'saved file') + '?', 'They’re already saved on a phone or downloaded to this computer, so they’ll just be removed from PhoneDrop.');
 };
 $('getBtn').onclick = function(){
-  var l = files.filter(function(f){ return f.from && !f.got; });
+  var l = files.filter(function(f){ return f.from && !f.got && !f.note; });
   downloadMany(l); toast('Downloading ' + plural(l.length, 'file') + ' to this computer’s Downloads folder');
 };
 
@@ -1169,6 +1226,7 @@ grid.addEventListener('click', function(e){
     selecting = true; renderChrome(); return;
   }
   if (selecting || e.target.closest('.chk') || e.ctrlKey || e.metaKey) { toggle(name); lastClicked = name; return; }
+  if (byName[name] && byName[name].note) return openNote(byName[name]);
   openLb(name);
 });
 grid.addEventListener('contextmenu', function(e){ if (isMobile) e.preventDefault(); });
@@ -1268,10 +1326,10 @@ function throttle(fn, ms){ var t = 0, q = false; return function(){ if (q) retur
 // Big ones (long videos) only download when you ask, with a progress bar, so nothing huge downloads by surprise.
 var AUTO_BYTES = BATCH_BYTES, HUGE_BYTES = 1536 * 1048576, KEEP_BYTES = 300 * 1048576;
 var wantList = [], wantKeys = new Set(), manualKey = '', batchKeyNow = '', dockMeter = new Meter();
-function targets(){
-  if (selecting) return files.filter(function(f){ return sel.has(f.name); });
+function targets(){   // (notes never join: they're copied, not saved)
+  if (selecting) return files.filter(function(f){ return sel.has(f.name) && !f.note; });
   // oldest first: files the computer adds while a batch downloads join at the end instead of pushing one out of it
-  return files.filter(function(f){ return isMedia(f) && !saved[key(f)] && !ownFile(f); }).reverse();
+  return files.filter(function(f){ return isMedia(f) && !saved[key(f)] && !ownFile(f) && !f.note; }).reverse();
 }
 function nextBatch(list){
   var media = list.filter(isMedia), other = list.filter(function(f){ return !isMedia(f); });
@@ -1413,14 +1471,14 @@ function setDock(o){
   $('t2').textContent = o.t2 || ''; $('t2').hidden = !o.t2;
   $('fill').style.width = (o.fill || 0) + '%';
   $('cancelBtn').hidden = !o.cancel;
-  $('sendBtn').hidden = selecting || !!o.cancel;
+  $('sendBtn').hidden = $('textSend').hidden = selecting || !!o.cancel;
   dockMode = o.mode;
 }
 function renderDock(){
-  $('sendBtn').hidden = selecting;
+  $('sendBtn').hidden = $('textSend').hidden = selecting;
   $('delBtn').hidden = !selecting;
   $('delBtn').disabled = !sel.size;
-  var others = files.filter(function(f){ return !ownFile(f); });
+  var others = files.filter(function(f){ return !ownFile(f) && !f.note; });
   if (!others.length && !selecting) {
     var nGot = files.filter(function(f){ return f.got; }).length;
     return setDock({ mode: 'send', icon: IC.photos, t1: 'Send files to computer', t2: files.length ? joinDot(plural(files.length, 'file') + ' sent',
@@ -1574,6 +1632,49 @@ $('clearBtn').onclick = function(){
     if (!ok) return; fetch('/api/files', { method: 'DELETE' }).then(function(){ setSelecting(false); load(); });
   });
 };
+
+/* ================= notes: text and links, both ways ================= */
+// A note is a .txt the server marks `note`. Tapping its card shows the whole text (escaped; http(s) links are
+// links) with Copy, and Open link when the note is just one link. Nothing is ever copied by itself.
+function noteText(f){
+  return fetch(fileUrl(f)).then(function(r){ if (r.status === 401) { pairing('removed'); throw 0; } return r.text(); });
+}
+function noteTitle(f, link){ return (link ? 'Link' : 'Note') + (f.from && !ownFile(f) ? ' from ' + f.from : ownFile(f) ? ' you sent' : isMobile ? ' from the computer' : ''); }
+function openNote(f){
+  noteText(f).then(function(t){
+    var link = singleLink(t), acts = [{ label: 'Close' }, { label: 'Copy', cls: link ? '' : 'primary', run: function(){ copyText(t); } }];
+    if (link) acts.push({ label: 'Open link', cls: 'primary', run: function(){ window.open(link, '_blank', 'noopener,noreferrer'); } });
+    sheet({ title: noteTitle(f, link), html: '<div class="notefull">' + linkify(t) + '</div>', actions: acts });
+  }, function(e){ if (e !== 0) toast('Couldn’t open the note'); });
+}
+// PC: "iPhone sent a link · Copy" (the text is fetched now, so Copy works straight from the click)
+function noteToast(f){
+  noteText(f).then(function(t){
+    toast(f.from + ' sent ' + (singleLink(t) ? 'a link' : 'a note'), { label: 'Copy', run: function(){ copyText(t); } });
+  }, function(){});
+}
+// Send text: a box (PC: also Ctrl+V with text, pre-filled; it still needs a click, so a stray paste sends nothing)
+function openTextBox(pre){
+  sheet({ title: isMobile ? 'Send text to the computer' : 'Send text to your phone',
+    html: '<textarea class="textbox" id="textIn" placeholder="Type or paste text or a link"></textarea>',
+    actions: [{ label: 'Cancel' }, { label: 'Send', cls: 'primary', run: function(){
+      var t = $('textIn').value;
+      if (!t.trim()) { toast('Type something first'); return false; }
+      sendText(t);
+    } }] });
+  var a = $('textIn'); a.value = pre || ''; setTimeout(function(){ a.focus(); }, 30);
+}
+function sendText(t){
+  fetch('/api/text?from=' + enc(myId) + '&fromName=' + enc(myName), { method: 'POST', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: t })
+    .then(function(r){
+      if (r.status === 401) return pairing('removed');
+      if (r.ok) { toast(singleLink(t) ? 'Link sent' : 'Text sent'); load(); }
+      else toast(r.status === 413 ? 'That’s too long (1 MB at most)' : 'Couldn’t send it');
+    }, function(){ toast('Couldn’t reach the computer'); });
+}
+setBtn($('textBtn'), IC.text, 'Send text');
+$('textBtn').onclick = function(){ openTextBox(''); };
+$('textSend').onclick = function(){ openTextBox(''); };
 
 /* ================= update banner (installed PhoneDrop, on this PC only) ================= */
 // The server checks GitHub for a newer stable release and tells this page (never phones) via /api/info and SSE.
@@ -1838,14 +1939,19 @@ window.addEventListener('drop', function(e){
 });
 window.addEventListener('paste', function(e){
   var fl = e.clipboardData && e.clipboardData.files;
-  if (fl && fl.length) { e.preventDefault(); upload(fl); }
+  if (fl && fl.length) { e.preventDefault(); upload(fl); return; }
+  // text (no files) pasted outside a text field: open Send text with it, ready to send
+  var t = e.clipboardData && e.clipboardData.getData('text/plain');
+  if (t && t.trim() && !/INPUT|TEXTAREA/.test((e.target && e.target.tagName) || '') && $('modal').hidden && !document.body.classList.contains('unpaired')) {
+    e.preventDefault(); openTextBox(t);
+  }
 });
 $('ovT').textContent = isMobile ? 'Drop to send to computer' : 'Drop to send to your phone';
 
 /* ================= viewer ================= */
 var lbList = [], lbIdx = -1, lbKey = '', lbFile = null, lbWant = false, lbMeter = new Meter(), lbUrl = '';
 function openLb(name){
-  lbList = files.slice();
+  lbList = files.filter(function(f){ return !f.note; });
   lbIdx = lbList.findIndex(function(f){ return f.name === name; });
   if (lbIdx < 0) return;
   $('lb').hidden = false; document.body.style.overflow = 'hidden';
@@ -1988,7 +2094,8 @@ $('lbDel').onclick = function(){
 window.addEventListener('keydown', function(e){
   if (!$('modal').hidden) {
     if (e.key === 'Escape' && sheetDone) sheetDone(-1);
-    if (e.key === 'Enter') { var bs = $('mRow').children; if (bs.length) bs[bs.length - 1].click(); }
+    // Enter picks the main button; in the text box it's a new line, and Ctrl+Enter sends
+    if (e.key === 'Enter' && (!/TEXTAREA/.test(e.target.tagName) || e.ctrlKey || e.metaKey)) { e.preventDefault(); var bs = $('mRow').children; if (bs.length) bs[bs.length - 1].click(); }
     return;
   }
   if (!$('lb').hidden) {

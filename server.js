@@ -293,14 +293,14 @@ function listFiles() {
     let s;
     try { s = fs.statSync(path.join(DIR, name)); } catch (e) { continue; }
     if (!s.isFile()) continue;
-    out.push({
+    out.push(Object.assign({
       name, size: s.size, type: mimeOf(name), mtime: Math.round(s.mtimeMs),
       thumb: fs.existsSync(path.join(THUMBS, name + '.jpg')),
       saved: savedBy.has(name) ? savedBy.get(name).size : 0,
       dur: metaOf(name).dur || 0,
       from: (metaOf(name).from || {}).name || '', fromId: (metaOf(name).from || {}).id || '', // sent by a phone
       got: gotOnPc.has(name), // downloaded to this computer
-    });
+    }, metaOf(name).note ? { note: true, preview: metaOf(name).preview || '' } : null));
   }
   return out.sort((a, b) => b.mtime - a.mtime || a.name.localeCompare(b.name));
 }
@@ -322,6 +322,14 @@ function forget(name) {
   for (const ext of ['.jpg', '.json']) { try { fs.unlinkSync(path.join(THUMBS, name + ext)); } catch (e) {} }
 }
 const BIG_BUF = { highWaterMark: 1 << 20 }; // 1 MB chunks: much faster for big videos
+// notes (text or a link sent from either side) are .txt files with `note: true` in their metadata, so listing,
+// live updates, delete and Clear all treat them like any file. Named after their start: "Link - example.com.txt".
+const NOTE_MAX = 1048576;
+function noteName(text) {
+  const t = text.trim();
+  if (/^https?:\/\/\S+$/i.test(t)) { try { return safeName('Link - ' + new URL(t).hostname + '.txt'); } catch (e) {} }
+  return safeName('Note - ' + t.split(/\s+/).join(' ').slice(0, 40).trim() + '.txt');
+}
 // `shared` = one of the shared files (test mode can slow those down or cut them off)
 function sendFile(req, res, file, type, extra, shared) {
   let st;
@@ -679,6 +687,25 @@ function handler(req, res) {
       bump();
     });
     req.pipe(out);
+    return;
+  }
+  if (req.method === 'POST' && p === '/api/text') {
+    if (Number(req.headers['content-length']) > NOTE_MAX) { req.resume(); return json(res, 413, { error: 'too long (1 MB at most)' }); }
+    const chunks = []; let len = 0;
+    req.on('data', (c) => { len += c.length; if (len <= NOTE_MAX) chunks.push(c); });
+    req.on('end', () => {
+      if (len > NOTE_MAX) return json(res, 413, { error: 'too long (1 MB at most)' });
+      const text = Buffer.concat(chunks).toString('utf8');
+      if (!text.trim()) return json(res, 400, { error: 'empty' });
+      const name = uniqueName(noteName(text));
+      fs.writeFile(path.join(DIR, name), text, 'utf8', (e) => {
+        if (e) return json(res, e.code === 'ENOSPC' ? 507 : 500, { error: e.code === 'ENOSPC' ? 'disk full' : 'save failed' });
+        setMeta(name, Object.assign({ note: true, preview: text.slice(0, 300) },
+          phone ? { from: { id: String(q('from') || phone.id).slice(0, 40), name: String(q('fromName') || phone.name).slice(0, 40) } } : null));
+        json(res, 200, { name });
+        bump();
+      });
+    });
     return;
   }
   if (req.method === 'POST' && p === '/thumb') {

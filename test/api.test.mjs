@@ -490,3 +490,65 @@ test('many uploads at once all arrive intact', async () => {
   assert.equal(new Set(names).size, 20, 'all got different names');
   for (let i = 0; i < 20; i++) assert.equal(sha(Buffer.from(await (await get('/files/' + encodeURIComponent(names[i]))).arrayBuffer())), sha(datas[i]));
 });
+
+// ---------- notes: text and links ----------
+const sendText = (body, headers, query = '') => fetch(s.url + '/api/text' + query, { method: 'POST', body, headers: Object.assign({ 'Content-Type': 'text/plain; charset=utf-8' }, headers) });
+
+test('notes: text is saved as-is (unicode too) and listed as a note with a preview', async () => {
+  await reset();
+  const text = 'Grüße aus München 🎉\n第二行 · 3 ✓\n\ttabs and  spaces  ';
+  const r = await sendText(text);
+  assert.equal(r.status, 200);
+  const { name } = await r.json();
+  assert.match(name, /^Note - Grüße aus München 🎉 第二行 · 3 ✓.*\.txt$/);
+  const [f] = await files();
+  assert.equal(f.name, name);
+  assert.equal(f.note, true);
+  assert.equal(f.preview, text);
+  assert.equal(f.type, 'text/plain');
+  assert.equal(await (await get('/files/' + encodeURIComponent(name))).text(), text, 'byte for byte');
+  // ordinary files don't have the note fields
+  await upload(s.url, 'plain.txt', Buffer.from('hi'));
+  assert.equal((await files()).find((x) => x.name === 'plain.txt').note, undefined);
+});
+
+test('notes: a link is named after its site; long text gets a short preview', async () => {
+  await reset();
+  assert.equal((await (await sendText('https://www.example.com/some/page?x=1')).json()).name, 'Link - www.example.com.txt');
+  assert.equal((await (await sendText('https://www.example.com/other')).json()).name, 'Link - www.example.com (1).txt');
+  const long = 'word '.repeat(5000);
+  const { name } = await (await sendText(long)).json();
+  const f = (await files()).find((x) => x.name === name);
+  assert.equal(f.preview.length, 300);
+  assert.equal(f.size, Buffer.byteLength(long));
+  // names stay safe whatever the text says
+  const { name: n2 } = await (await sendText('../../etc/passwd <script>')).json();
+  assert.ok(!n2.includes('/') && !n2.includes('<'), n2);
+});
+
+test('notes: empty is rejected, over 1 MB is 413, nothing is saved', async () => {
+  await reset();
+  for (const t of ['', '   ', '\n\t\n']) assert.equal((await sendText(t)).status, 400, JSON.stringify(t));
+  assert.equal((await sendText('x'.repeat(1048577))).status, 413);
+  // without a Content-Length up front (streamed), still 413
+  const big = new ReadableStream({ start(c) { for (let i = 0; i < 3; i++) c.enqueue(new Uint8Array(500000).fill(120)); c.close(); } });
+  assert.equal((await fetch(s.url + '/api/text', { method: 'POST', body: big, duplex: 'half' })).status, 413);
+  assert.equal((await sendText('x'.repeat(1048576))).status, 200, 'exactly 1 MB is fine');
+  assert.equal((await files()).length, 1);
+});
+
+test('notes: from a phone (remembered like files), deleted and cleared like files', async () => {
+  await reset();
+  const ph = await s.phone('iPhone', 'note-phone');
+  const r = await sendText('https://example.org', ph, '?from=note-phone&fromName=iPhone');
+  assert.equal(r.status, 200);
+  const [f] = await files();
+  assert.equal(f.from, 'iPhone');
+  assert.equal(f.fromId, 'note-phone');
+  assert.equal((await sendText('hi', PHONE)).status, 401, 'unpaired phones can’t send notes');
+  await sendText('from the PC');
+  assert.equal((await fetch(s.url + '/files/' + encodeURIComponent(f.name), { method: 'DELETE' })).status, 200);
+  assert.deepEqual((await files()).map((x) => x.note), [true]);
+  await fetch(s.url + '/api/files', { method: 'DELETE' });
+  assert.equal((await files()).length, 0);
+});

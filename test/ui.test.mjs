@@ -295,7 +295,7 @@ test('selection: long-press and slide selects a range on the phone; Shift-click 
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await sleep(300);
   assert.equal(await ip.$$eval('#grid .tile.sel', (t) => t.length), 5);
-  assert.match(await dock(ip), /^Save 5 /);
+  await waitFor(async () => /^Save 5 /.test(await dock(ip)), 20000, 'Save 5 (dock: ' + await dock(ip) + ')'); // once the 5 are downloaded
   const pc = await open('pc');
   await pc.waitForFunction(() => document.querySelectorAll('#grid .tile').length === 9);
   await pc.click('#grid .tile:nth-child(2) .chk');
@@ -527,4 +527,123 @@ test('pairing: an iPhone on the http link switches to https (Save to Photos) and
     await ip.click('#save');
     await ip.waitForFunction(() => window.__shared.length === 1);
   } finally { await b.close(); }
+});
+
+// ---------- notes: text and links ----------
+const clip = { permissions: ['clipboard-read', 'clipboard-write'] };
+test('notes: the PC sends text, the phone shows a card and the whole text, with Copy', async () => {
+  await reset();
+  const pc = await open('pc');
+  const ip = await open('iphone', { ctx: clip });
+  await ip.waitForSelector('#dock:not([hidden])');
+  await pc.click('#textBtn');
+  await pc.waitForSelector('#textIn');
+  const text = 'Wi-Fi password: Tr0ub4dor&3\nDoor code 4711 · Grüße 🎉';
+  await pc.fill('#textIn', text);
+  await pc.click('#mRow .primary');
+  await ip.waitForSelector('#grid .tile .notec');
+  assert.equal(await ip.$eval('#grid .notec .nt', (e) => e.textContent), text);
+  assert.equal(await dock(ip), 'Send files to computer', 'a note isn’t something to save');
+  await ip.click('#grid .tile');
+  await ip.waitForSelector('#mP .notefull');
+  assert.equal(await ip.$eval('#mP .notefull', (e) => e.textContent), text);
+  assert.equal(await ip.$eval('#mT', (e) => e.textContent), 'Note from the computer');
+  assert.deepEqual(await ip.$$eval('#mRow button', (b) => b.map((x) => x.textContent)), ['Close', 'Copy']);
+  await ip.click('#mRow button:nth-child(2)');
+  assert.equal(await ip.evaluate(() => navigator.clipboard.readText()), text);
+  assert.equal(await ip.$eval('#modal', (m) => m.hidden), true);
+  await closeAll();
+});
+
+test('notes: a phone sends a link; the PC toasts it with Copy, and the note has Open link', async () => {
+  await reset();
+  const pc = await open('pc', { ctx: clip });
+  const an = await open('android');
+  await an.waitForSelector('#textSend:not([hidden])');
+  await an.click('#textSend');
+  await an.fill('#textIn', 'https://example.com/recipe?id=42');
+  await an.click('#mRow .primary');
+  await pc.waitForFunction(() => /Android phone sent a link/.test(document.getElementById('toast').textContent));
+  await pc.click('#toast .tb');
+  assert.equal(await pc.evaluate(() => navigator.clipboard.readText()), 'https://example.com/recipe?id=42');
+  await pc.waitForSelector('#grid .tile .notec.link');
+  assert.equal(await pc.$eval('#getBtn', (b) => b.hidden), true, 'notes aren’t "Download from phone" files');
+  await pc.click('#grid .tile');
+  await pc.waitForSelector('#mP .notefull');
+  assert.equal(await pc.$eval('#mT', (e) => e.textContent), 'Link from Android phone');
+  const popup = pc.context().waitForEvent('page');
+  await pc.click('#mRow .primary');   // Open link
+  const p2 = await popup;
+  assert.equal(p2.url(), 'https://example.com/recipe?id=42');
+  assert.equal(await p2.evaluate(() => window.opener).catch(() => null), null, 'opened with noopener');
+  await closeAll();
+});
+
+test('notes: text from a phone is shown as text, never run as HTML', async () => {
+  await reset();
+  const pc = await open('pc');
+  const evil = '<img src=x onerror="window.__xss=1"><script>window.__xss=2</script> javascript:alert(1) <b>bold</b> https://ok.example/a"onmouseover="window.__xss=3';
+  const ph = await s.phone('Android phone');
+  await fetch(s.url + '/api/text', { method: 'POST', body: evil, headers: ph });
+  await pc.waitForSelector('#grid .notec');
+  assert.equal(await pc.$eval('#grid .notec .nt', (e) => e.textContent), evil);
+  assert.equal(await pc.$$eval('#grid .notec img, #grid .notec script, #grid .notec b', (x) => x.length), 0);
+  await pc.click('#grid .tile');
+  await pc.waitForSelector('#mP .notefull');
+  assert.equal(await pc.$eval('#mP .notefull', (e) => e.textContent), evil);
+  assert.equal(await pc.$$eval('#mP img, #mP script, #mP b', (x) => x.length), 0);
+  const links = await pc.$$eval('#mP a', (a) => a.map((x) => [x.getAttribute('href'), x.getAttribute('rel'), x.attributes.length]));
+  assert.deepEqual(links, [['https://ok.example/a', 'noopener noreferrer', 3]], 'only the http(s) link is a link, with nothing else on it');
+  await pc.hover('#mP a');
+  assert.equal(await pc.evaluate(() => window.__xss), undefined);
+  assert.deepEqual(pc.errors, []);
+  await closeAll();
+});
+
+test('notes: Ctrl+V with text opens Send text, filled in; nothing is sent until you click Send', async () => {
+  await reset();
+  const pc = await open('pc');
+  await pc.waitForSelector('#textBtn');
+  const paste = (t) => pc.evaluate((x) => {
+    const dt = new DataTransfer(); dt.setData('text/plain', x);
+    document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, t);
+  await paste('a stray paste');
+  await pc.waitForSelector('#textIn');
+  assert.equal(await pc.$eval('#textIn', (a) => a.value), 'a stray paste');
+  await sleep(500);
+  assert.equal((await s.api('/api/files')).body.length, 0, 'not sent by itself');
+  await pc.click('#mRow button:first-child'); // Cancel
+  await sleep(300);
+  assert.equal((await s.api('/api/files')).body.length, 0);
+  await paste('meant to send');
+  await pc.waitForSelector('#textIn');
+  await pc.press('#textIn', 'Enter');   // a new line, not "send"
+  assert.equal(await pc.$eval('#textIn', (a) => a.value), 'meant to send\n');
+  await pc.press('#textIn', 'Control+Enter');
+  await waitFor(async () => (await s.api('/api/files')).body.length === 1, 5000, 'sent');
+  assert.equal((await s.api('/api/files')).body[0].preview, 'meant to send\n');
+  // an empty box doesn't send
+  await pc.click('#textBtn');
+  await pc.click('#mRow .primary');
+  assert.equal(await pc.$eval('#modal', (m) => m.hidden), false);
+  await closeAll();
+});
+
+test('notes: never part of Save to Photos or Save to phone', async () => {
+  await reset();
+  await samples({ photos: 1 });
+  await fetch(s.url + '/api/text', { method: 'POST', body: 'just a note' });
+  const ip = await open('iphone');
+  await waitFor(async () => (await dock(ip)) === 'Save photo to Photos', 15000, 'only the photo');
+  await ip.click('#selBtn');
+  await ip.click('#grid .tile:has(.notec)');
+  await waitFor(async () => (await dock(ip)) === 'Select items to save', 3000, 'a selected note isn’t saved either');
+  await sleep(300);
+  await ip.click('#grid .tile:not(:has(.notec))');
+  await waitFor(async () => (await dock(ip)) === 'Save photo to Photos', 3000, 'the selected photo only');
+  await ip.click('#save');
+  await ip.waitForFunction(() => window.__shared.length === 1);
+  assert.deepEqual(await ip.evaluate(() => window.__shared.map((x) => x.name)), ['Sample 01.png']);
+  await closeAll();
 });

@@ -37,7 +37,7 @@ test('every route that reads or changes files needs a paired phone', async () =>
   const routes = [
     ['GET', '/api/files'], ['GET', '/api/events'], ['POST', '/api/saved', '{"files":["a.jpg"]}'], ['POST', '/upload?name=x.jpg', 'hello'],
     ['POST', '/thumb?name=a.jpg', 'x'], ['GET', '/files/a.jpg'], ['HEAD', '/files/a.jpg'], ['GET', '/files/a.jpg?dl=1'], ['DELETE', '/files/a.jpg'],
-    ['GET', '/thumbs/a.jpg'], ['DELETE', '/api/files'], ['GET', '/api/phones'], ['POST', '/api/pair/handoff', '{}'],
+    ['GET', '/thumbs/a.jpg'], ['DELETE', '/api/files'], ['GET', '/api/phones'], ['POST', '/api/pair/handoff', '{}'], ['POST', '/api/text', 'hello'],
   ];
   for (const bad of [PHONE, Object.assign({ cookie: 'pd=' + 'A'.repeat(43) }, PHONE), Object.assign({ cookie: 'pd_s=nope; pd=' }, PHONE)]) {
     for (const [method, p, body] of routes) {
