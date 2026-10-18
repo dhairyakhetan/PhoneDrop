@@ -354,8 +354,8 @@ const clients = new Set();
 const savedBy = new Map(); // file name -> Set of phone ids that saved it
 const gotOnPc = new Set(); // names of files downloaded to this computer (what counts as "transferred" for a phone's files)
 const devices = new Map(); // phone id -> { id, name, conns, gone }
-function sendAll(ev, data) { const m = 'event: ' + ev + '\ndata: ' + JSON.stringify(data) + '\n\n'; for (const c of clients) c.write(m); }
-function sendLocal(ev, data) { const m = 'event: ' + ev + '\ndata: ' + JSON.stringify(data) + '\n\n'; for (const c of clients) if (c.local) c.write(m); }
+function sendAll(ev, data) { const m = 'event: ' + ev + '\ndata: ' + JSON.stringify(data) + '\n\n'; for (const c of clients) if (!c.writableEnded) c.write(m); }
+function sendLocal(ev, data) { const m = 'event: ' + ev + '\ndata: ' + JSON.stringify(data) + '\n\n'; for (const c of clients) if (c.local && !c.writableEnded) c.write(m); }
 function devList() { return [...devices.values()].filter((d) => d.conns > 0 || d.lingering).map((d) => ({ id: d.id, name: d.name })); }
 function readJSON(req, cb) { let b = ''; req.on('data', (c) => { if (b.length < 1e6) b += c; }); req.on('end', () => { try { cb(JSON.parse(b)); } catch (e) { cb(null); } }); }
 function clearAll() {
@@ -369,10 +369,157 @@ function clearAll() {
 let bumpTimer = null;
 function bump() {
   clearTimeout(bumpTimer);
-  bumpTimer = setTimeout(() => { for (const c of clients) c.write('data: change\n\n'); }, 60);
+  bumpTimer = setTimeout(() => { for (const c of clients) if (!c.writableEnded) c.write('data: change\n\n'); }, 60);
 }
-setInterval(() => { for (const c of clients) c.write(': ping\n\n'); }, 25000);
+setInterval(() => { for (const c of clients) if (!c.writableEnded) c.write(': ping\n\n'); }, 25000);
 try { fs.watch(DIR, (ev, fn) => { if (!fn || String(fn)[0] !== '.') bump(); }); } catch (e) {}
+
+// ---------- pairing: only phones you allowed get in ----------
+// This PC's own page is always trusted. A phone pairs once: by opening the QR code's link, which carries a code
+// that changes every 10 minutes and is only ever shown on this PC, or (address typed by hand) by an Allow click
+// on this PC. Pairing gives the phone a random token in an HttpOnly cookie, so <img>, <video>, EventSource and
+// download links carry it too. Only the token's SHA-256 is kept, in paired.json in the data folder (not shared/,
+// which is cleared at start), so restarts and updates don't unpair anyone.
+const PAIRED_FILE = path.join(BASE, 'paired.json');
+const MAX_REQUESTS = 3, BLOCK_FOR = 10 * 60000;
+let REQUEST_LIFE = 2 * 60000; // (test mode can shorten it)
+let paired = []; // [{ pid, id, name, hashes: [sha256 hex, one per http/https cookie], created, seen }]
+try { paired = JSON.parse(fs.readFileSync(PAIRED_FILE, 'utf8')).phones || []; } catch (e) {}
+function savePaired() {
+  try { fs.writeFileSync(PAIRED_FILE + '.tmp', JSON.stringify({ phones: paired }, null, 1)); fs.renameSync(PAIRED_FILE + '.tmp', PAIRED_FILE); } catch (e) {}
+}
+let seenTimer = null; // "last seen" is saved at most once a minute
+function touch(d) {
+  d.seen = Date.now();
+  if (!seenTimer) seenTimer = setTimeout(() => { seenTimer = null; savePaired(); }, 60000);
+}
+const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest();
+function cookies(req) {
+  const out = {};
+  for (const part of String(req.headers.cookie || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+  }
+  return out;
+}
+// the paired phone a request comes from, or null. Every stored hash is compared (in constant time), no early exit.
+function phoneOf(req) {
+  if (req.phone !== undefined) return req.phone;
+  const c = cookies(req), toks = [c.pd, c.pd_s].filter(Boolean);
+  let found = null;
+  for (const tok of toks) {
+    const h = sha256(tok);
+    for (const d of paired) for (const x of d.hashes) if (crypto.timingSafeEqual(Buffer.from(x, 'hex'), h)) found = d;
+  }
+  if (found) touch(found);
+  return (req.phone = found);
+}
+// a new token for phone `d`, as a Set-Cookie header. http and https get their own cookie names: a phone's browser
+// won't let the http page replace a cookie the https page marked Secure.
+function giveToken(req, d) {
+  const tok = crypto.randomBytes(32).toString('base64url'), secure = !!req.socket.encrypted;
+  d.hashes.push(sha256(tok).toString('hex'));
+  if (d.hashes.length > 4) d.hashes.shift();
+  savePaired();
+  return (secure ? 'pd_s=' : 'pd=') + tok + '; Path=/; Max-Age=315360000; HttpOnly; SameSite=Strict' + (secure ? '; Secure' : '');
+}
+function newPhone(id, name) {
+  const d = { pid: crypto.randomBytes(8).toString('hex'), id: String(id || '').slice(0, 40), name: String(name || 'Phone').slice(0, 40), hashes: [], created: Date.now(), seen: Date.now() };
+  paired.push(d);
+  return d;
+}
+function phoneList() {
+  return paired.map((d) => ({ pid: d.pid, name: d.name, created: d.created, seen: d.seen,
+    online: [...clients].some((c) => c.pid === d.pid) }));
+}
+function removePhone(pid) {
+  const d = paired.find((x) => x.pid === pid);
+  if (!d) return false;
+  paired = paired.filter((x) => x !== d);
+  savePaired();
+  for (const c of [...clients]) if (c.pid === pid) { clients.delete(c); c.end(); } // its live connection closes at once; its next request gets 401
+  if (devices.has(d.id)) { clearTimeout(devices.get(d.id).gone); devices.delete(d.id); sendAll('devices', devList()); }
+  sendLocal('phones', phoneList());
+  return true;
+}
+
+// The QR code's pairing code. The one before stays valid for 2 more minutes (a code scanned just as it changed).
+let pairLife = 10 * 60000, pairTimer = null;
+const pairCode = { code: '', expires: 0, prev: '', prevUntil: 0 };
+function rotateCode() {
+  clearTimeout(pairTimer);
+  if (pairCode.code) { pairCode.prev = pairCode.code; pairCode.prevUntil = Date.now() + 2 * 60000; }
+  pairCode.code = crypto.randomBytes(9).toString('base64url');
+  pairCode.expires = Date.now() + pairLife;
+  pairTimer = setTimeout(rotateCode, pairLife);
+  sendLocal('pair', pairInfo());
+}
+function pairInfo() { return { code: pairCode.code, expires: pairCode.expires }; }
+const same = (a, b) => typeof a === 'string' && a.length === b.length && b.length > 0 && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+function codeOK(c) { return same(c, pairCode.code) || (Date.now() < pairCode.prevUntil && same(c, pairCode.prev)); }
+// one-time codes that move a paired phone from the http link to the https one (a different origin)
+const handoffs = new Map(); // code -> { pid, until }
+
+// "Allow <iPhone> to connect?" requests from phones that typed the address. At most 3 at once and one per
+// address, each for 2 minutes, so a stranger can't flood this PC. Block ignores that address for 10 minutes.
+const requests = new Map(); // rid -> { rid, secret, id, name, ip, created, status: waiting|allowed|blocked, fake }
+const blockedIPs = new Map(); // ip -> until
+function tidyRequests() {
+  let changed = false;
+  for (const [rid, r] of requests) if (Date.now() - r.created > REQUEST_LIFE) { requests.delete(rid); changed = true; }
+  for (const [ip, until] of blockedIPs) if (Date.now() > until) blockedIPs.delete(ip);
+  if (changed) sendLocal('pair-requests', requestList());
+}
+setInterval(tidyRequests, 5000).unref();
+function requestList() {
+  return [...requests.values()].filter((r) => r.status === 'waiting').map((r) => ({ rid: r.rid, name: r.name, ip: r.ip, created: r.created }));
+}
+function answerRequest(rid, allow) {
+  const r = requests.get(rid);
+  if (!r || r.status !== 'waiting') return false;
+  r.status = allow ? 'allowed' : 'blocked';
+  if (!allow && !r.fake) blockedIPs.set(r.ip, Date.now() + BLOCK_FOR);
+  if (allow && r.fake && TEST) { requests.delete(rid); T.S.pairFake(r.id, r.name); } // test mode's pretend phones
+  sendLocal('pair-requests', requestList());
+  return true;
+}
+// POST /api/pair { id, name, code? | handoff? | rid + secret? } from a phone
+function pairPhone(req, res, b) {
+  // (test mode: x-phonedrop-ip pretends another address, since every test phone comes from 127.0.0.1)
+  const ip = String((TEST && req.headers['x-phonedrop-ip']) || req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  const done = (d) => {
+    res.setHeader('Set-Cookie', giveToken(req, d));
+    sendLocal('phones', phoneList());
+    sendLocal('paired', { name: d.name });
+    json(res, 200, { status: 'paired', paired: true, name: d.name });
+  };
+  const known = phoneOf(req);
+  if (known) { if (b.name) known.name = String(b.name).slice(0, 40); return json(res, 200, { status: 'paired', paired: true, name: known.name }); }
+  if (b.code && codeOK(String(b.code))) return done(newPhone(b.id, b.name));
+  if (b.handoff) {
+    const h = handoffs.get(String(b.handoff));
+    handoffs.delete(String(b.handoff)); // one time only
+    const d = h && Date.now() < h.until && paired.find((x) => x.pid === h.pid);
+    if (d) return done(d);
+  }
+  tidyRequests();
+  if (b.rid) { // a phone waiting for an answer
+    const r = requests.get(String(b.rid));
+    if (!r || !same(String(b.secret || ''), r.secret)) return json(res, 200, { status: 'expired' });
+    if (r.status === 'blocked') { requests.delete(r.rid); return json(res, 200, { status: 'blocked' }); }
+    if (r.status === 'allowed') { requests.delete(r.rid); return done(newPhone(r.id, r.name)); }
+    return json(res, 200, { status: 'waiting', rid: r.rid, secret: r.secret, expires: r.created + REQUEST_LIFE });
+  }
+  if (blockedIPs.has(ip)) return json(res, 200, { status: 'blocked' });
+  const mine = [...requests.values()].find((r) => r.ip === ip && r.status === 'waiting');
+  if (mine) { mine.name = String(b.name || mine.name).slice(0, 40); return json(res, 200, { status: 'waiting', rid: mine.rid, secret: mine.secret, expires: mine.created + REQUEST_LIFE }); }
+  if (requestList().length >= MAX_REQUESTS) return json(res, 429, { status: 'busy' });
+  const r = { rid: crypto.randomBytes(8).toString('hex'), secret: crypto.randomBytes(16).toString('base64url'),
+    id: String(b.id || '').slice(0, 40), name: String(b.name || 'Phone').slice(0, 40), ip, created: Date.now(), status: 'waiting' };
+  requests.set(r.rid, r);
+  sendLocal('pair-requests', requestList());
+  json(res, 200, { status: 'waiting', rid: r.rid, secret: r.secret, expires: r.created + REQUEST_LIFE });
+}
 
 // ---------- QR code (rendered here so it works without internet) ----------
 // vendor/qrcode.js is qrcode-generator 1.4.4 (MIT, Kazuhiko Arase), loaded without require() so it also works in the exe
@@ -412,17 +559,44 @@ function handler(req, res) {
     res.writeHead(200, { 'Content-Type': ICON_FILES[p][1], 'Cache-Control': 'public, max-age=86400' });
     return res.end(ICON_FILES[p][0]);
   }
-  if (req.method === 'GET' && p === '/api/info') {
-    return json(res, 200, Object.assign({ host: HOST, app: APP, version: VERSION, test: TEST, update: isLocal(req) ? updateInfo() : null }, netInfo()));
+  if (req.method === 'GET' && p === '/qr.svg') {
+    let svg;
+    try { svg = qrSVG(q('u') || httpUrl()); } catch (e) { return json(res, 400, { error: 'too long for a QR code' }); }
+    res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-store' });
+    return res.end(svg);
   }
+  const pc = isPC(req), phone = pc ? null : phoneOf(req);
+  if (req.method === 'GET' && p === '/api/info') {
+    const info = { host: HOST, version: VERSION, test: TEST, paired: pc || !!phone, httpPort: HTTP_PORT };
+    if (!pc && !phone) return json(res, 200, info); // not paired: just enough for the pairing screen
+    return json(res, 200, Object.assign(info, { app: APP, update: pc ? updateInfo() : null }, netInfo(),
+      pc ? { pair: pairInfo(), requests: requestList(), phones: phoneList() } : { name: phone.name }));
+  }
+  if (req.method === 'POST' && p === '/api/pair') return readJSON(req, (b) => (b ? pairPhone(req, res, b) : json(res, 400, { error: 'bad request' })));
   // only from PhoneDrop's own page on this computer: not phones on the Wi-Fi, not other websites open in a browser here
-  if (req.method === 'POST' && p === '/api/update/install') {
-    const host = req.headers.host || '', origin = req.headers.origin;
-    if (!isLocal(req) || !/^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(host) || (origin && origin.replace(/^https?:\/\//, '') !== host))
-      return json(res, 403, { error: 'only from this computer' });
-    if (!update) return json(res, 404, { error: 'no update' });
-    if (!update.state || update.state === 'failed' || update.state === 'cancelled') installUpdate();
-    return json(res, 200, { ok: true });
+  if (req.method === 'POST' && ['/api/update/install', '/api/pair/allow', '/api/pair/block', '/api/phones/remove'].includes(p)) {
+    if (!pc) return json(res, 403, { error: 'only from this computer' });
+    if (p === '/api/update/install') {
+      if (!update) return json(res, 404, { error: 'no update' });
+      if (!update.state || update.state === 'failed' || update.state === 'cancelled') installUpdate();
+      return json(res, 200, { ok: true });
+    }
+    return readJSON(req, (b) => {
+      const ok = p === '/api/phones/remove' ? removePhone(String((b && b.pid) || '')) : answerRequest(String((b && b.rid) || ''), p === '/api/pair/allow');
+      json(res, ok ? 200 : 404, ok ? { ok: true } : { error: 'not found' });
+    });
+  }
+
+  // everything below reads or changes files: this PC, or a paired phone
+  if (!pc && !phone) return json(res, 401, { error: 'not paired' });
+  if (req.method === 'GET' && p === '/api/phones') return pc ? json(res, 200, phoneList()) : json(res, 403, { error: 'only from this computer' });
+  // a paired phone moving from the http link to the https one (iPhone's Save to Photos): a one-time code for that link
+  if (req.method === 'POST' && p === '/api/pair/handoff') {
+    if (!phone) return json(res, 400, { error: 'only for phones' });
+    const code = crypto.randomBytes(12).toString('base64url');
+    handoffs.set(code, { pid: phone.pid, until: Date.now() + REQUEST_LIFE });
+    for (const [c, h] of handoffs) if (Date.now() > h.until) handoffs.delete(c);
+    return json(res, 200, { code });
   }
   if (req.method === 'GET' && p === '/api/files') return json(res, 200, listFiles());
   if (req.method === 'POST' && p === '/api/saved') {
@@ -445,8 +619,9 @@ function handler(req, res) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
     res.write('retry: 2000\n\n');
     clients.add(res);
-    const local = isLocal(req);
+    const local = pc;
     res.local = local;
+    res.pid = phone ? phone.pid : null;
     const id = String(q('id') || '').slice(0, 40), dname = String(q('name') || 'Phone').slice(0, 40);
     if (!local && id) {
       let d = devices.get(id);
@@ -466,15 +641,11 @@ function handler(req, res) {
     }
     res.write('event: devices\ndata: ' + JSON.stringify(devList()) + '\n\n');
     if (local && update) res.write('event: update\ndata: ' + JSON.stringify(updateInfo()) + '\n\n');
+    if (phone) sendLocal('phones', phoneList());
+    req.on('close', () => { if (res.pid) setTimeout(() => sendLocal('phones', phoneList()), 50); });
     if (local) { localClients++; sawLocal = true; }
     req.on('close', () => { clients.delete(res); if (local) { localClients--; maybeQuit(); } });
     return;
-  }
-  if (req.method === 'GET' && p === '/qr.svg') {
-    let svg;
-    try { svg = qrSVG(q('u') || httpUrl()); } catch (e) { return json(res, 400, { error: 'too long for a QR code' }); }
-    res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-store' });
-    return res.end(svg);
   }
 
   // upload: streamed to a hidden temp file, renamed when complete (no half-files ever show up)
@@ -501,7 +672,7 @@ function handler(req, res) {
       if (uid) { uploaded.set(uid, final); if (uploaded.size > 1000) uploaded.delete(uploaded.keys().next().value); }
       try { fs.renameSync(tmp, path.join(DIR, final)); } catch (e) { fail(); return json(res, 500, { error: 'save failed' }); }
       // remember which phone sent it: it isn't offered back to that phone, and the PC shows it as "from iPhone"
-      if (!isLocal(req)) setMeta(final, { from: { id: String(q('from') || '').slice(0, 40), name: String(q('fromName') || 'Phone').slice(0, 40) } });
+      if (phone) setMeta(final, { from: { id: String(q('from') || phone.id).slice(0, 40), name: String(q('fromName') || phone.name).slice(0, 40) } });
       // when a thumbnail is on its way, hide the file until it arrives so the tile appears once, fully drawn
       if (q('thumb')) { pendingThumb.add(final); setTimeout(() => { pendingThumb.delete(final); bump(); }, 5000); }
       json(res, 200, { name: final });
@@ -541,7 +712,7 @@ function handler(req, res) {
       return json(res, 200, { ok: true });
     }
     // a download to this computer that finished (all the way to the last byte) counts as transferred
-    if (q('dl') && req.method === 'GET' && isLocal(req)) res.on('finish', () => {
+    if (q('dl') && req.method === 'GET' && pc) res.on('finish', () => {
       const r = res.range; // a resumed download that reached the last byte counts too
       if ((res.statusCode === 200 || (r && r[1] === r[2] - 1)) && !gotOnPc.has(name)) { gotOnPc.add(name); bump(); }
     });
@@ -603,6 +774,12 @@ function isLocal(req) {
   // test mode: a phone browser (or the PC's browser pretending to be one) counts as a phone on the Wi-Fi
   if (TEST && (req.headers['x-phonedrop-phone'] || /iPhone|iPad|Android|Mobi/.test(req.headers['user-agent'] || ''))) return false;
   const a = req.socket.remoteAddress || ''; return a === '::1' || a === '127.0.0.1' || a === '::ffff:127.0.0.1';
+}
+// this PC's own page: a loopback connection that asked for "localhost" (not some website that pointed its own name
+// at 127.0.0.1: DNS rebinding) and, when the browser says where the request comes from, from that same address
+function isPC(req) {
+  const host = req.headers.host || '', origin = req.headers.origin;
+  return isLocal(req) && /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host) && (!origin || origin.replace(/^https?:\/\//, '') === host);
 }
 function maybeQuit() {
   if (!APP || !sawLocal) return;
@@ -935,6 +1112,7 @@ httpServer.on('error', (e) => { if (e.code === 'EADDRINUSE') portBusy(HTTP_PORT)
 function started() { if (LOADED) try { fs.writeFileSync(path.join(LOADED.dir, 'starts.txt'), '0'); } catch (e) {} }
 httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
   started();
+  rotateCode();
   console.log('\n  PhoneDrop ' + VERSION + ' is running on ' + HOST + (LOADED ? ' (quick update)' : '') + (TEST ? ' — TEST MODE, files in ' + BASE : '') + '\n');
   const updated = justUpdated();
   clearOld(updated);
@@ -1003,11 +1181,27 @@ function startHttps() {
 
 // test mode's controls (testmode.js) work through these
 if (TEST) T.attach({
-  REPO, BASE, DIR, VERSION, BUILD, uniqueName, bump, isLocal, devList, watchNet, netInfo, checkUpdate, updateInfo, clearAll,
+  REPO, BASE, DIR, VERSION, BUILD, uniqueName, bump, isLocal: isPC, devList, watchNet, netInfo, checkUpdate, updateInfo, clearAll,
+  rotateCode, pairInfo, requestList, phoneList, answerRequest, removePhone,
+  setPairLife(ms) { pairLife = ms; rotateCode(); },
+  setRequestLife(ms) { REQUEST_LIFE = ms; },
+  clearRequests() { requests.clear(); blockedIPs.clear(); sendLocal('pair-requests', requestList()); }, // nobody waiting, nobody blocked
+  // a pretend phone asking to connect (it shows on the PC like a real one; Allow pairs it and it "connects")
+  fakeRequest(id, name) {
+    const r = { rid: crypto.randomBytes(8).toString('hex'), secret: 'x', id, name, ip: 'test', created: Date.now(), status: 'waiting', fake: true };
+    requests.set(r.rid, r); sendLocal('pair-requests', requestList()); return r.rid;
+  },
+  pairFake(id, name) {
+    const d = paired.find((x) => x.id === id) || newPhone(id, name);
+    d.fake = true; savePaired(); sendLocal('phones', phoneList()); sendLocal('paired', { name: d.name });
+    devices.set(id, { id, name, conns: 1, fake: true, gone: null }); sendAll('devices', devList());
+  },
+  forgetPhones() { for (const d of [...paired]) removePhone(d.pid); for (const r of requests.values()) if (r.status === 'waiting') r.status = 'blocked'; sendLocal('pair-requests', requestList()); },
   resetUpdate() { update = null; sendLocal('update', null); },
-  addFakePhone(id, name) { devices.set(id, { id, name, conns: 1, fake: true, gone: null }); sendAll('devices', devList()); },
   removeFakePhone(id) {
     for (const d of [...devices.values()]) if (d.fake && (id === null || d.id === id)) devices.delete(d.id);
-    sendAll('devices', devList());
+    for (const d of [...paired]) if (d.fake && (id === null || d.id === id)) removePhone(d.pid);
+    for (const [rid, r] of requests) if (r.fake && (id === null || r.id === id)) requests.delete(rid);
+    sendAll('devices', devList()); sendLocal('pair-requests', requestList());
   },
 });

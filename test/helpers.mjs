@@ -14,7 +14,7 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 export const IOS_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 export const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36';
-export const PHONE = { 'x-phonedrop-phone': '1' }; // test mode: this request comes from a phone on the Wi-Fi
+export const PHONE = { 'x-phonedrop-phone': '1' }; // test mode: this request comes from a phone on the Wi-Fi (not paired)
 
 function free(port) {
   return new Promise((ok) => { const s = net.createServer().once('error', () => ok(false)).listen(port, '0.0.0.0', () => s.close(() => ok(true))); });
@@ -43,6 +43,15 @@ export async function startServer(o = {}) {
     url, port, https: 'https://localhost:' + (port + 443), data, proc, get log() { return log; },
     exited: new Promise((ok) => proc.on('exit', (code) => ok(code))),
     api: (p, body, headers) => api(url, p, body, headers),
+    // the QR code's pairing code (only this PC gets it)
+    async pairCode() { return (await api(url, '/api/info')).body.pair.code; },
+    // a phone paired the way scanning the QR code pairs it: headers for its requests (its cookie)
+    async phone(name = 'iPhone', id) {
+      const r = await api(url, '/api/pair', { code: await s.pairCode(), id: id || 'ph-' + crypto.randomBytes(3).toString('hex'), name }, PHONE);
+      const c = /(pd(?:_s)?=[^;]+)/.exec(r.headers.get('set-cookie') || '');
+      if (!c) throw new Error('pairing failed: ' + r.text);
+      return Object.assign({ cookie: c[1] }, PHONE);
+    },
     async stop() {
       await fetch(url + '/api/test/quit', { method: 'POST' }).catch(() => {}); // also stops a copy that restarted itself
       proc.kill();
@@ -69,7 +78,8 @@ export function request(url, o = {}) {
       res.on('end', () => {
         const buf = Buffer.concat(chunks), text = buf.toString();
         let j = null; try { j = JSON.parse(text); } catch (e) {}
-        ok({ status: res.statusCode, body: j, text, buf, headers: { get: (k) => res.headers[k.toLowerCase()] || null } });
+        const get = (k) => { const v = res.headers[k.toLowerCase()]; return v == null ? null : Array.isArray(v) ? v.join(', ') : v; };
+        ok({ status: res.statusCode, body: j, text, buf, headers: { get } });
       });
       res.on('error', no);
     });
@@ -145,6 +155,16 @@ export function browser() {
     throw new Error('No browser for the UI tests. Install Edge or Chrome, or set PHONEDROP_BROWSER to a Chromium. (' + err.message.split('\n')[0] + ')');
   })();
   return browserP;
+}
+// a separate browser with extra Chromium switches (closed by the caller). `direct` = these host names never go
+// through a proxy (a test machine may have one set up that only lets localhost through).
+export async function browserWith(args, direct) {
+  const { chromium } = await import('playwright-core');
+  const tries = [{}, { channel: 'msedge' }, { channel: 'chrome' }];
+  if (process.env.PHONEDROP_BROWSER) tries.unshift({ executablePath: process.env.PHONEDROP_BROWSER });
+  const proxy = direct ? { proxy: { server: 'http://127.0.0.1:9', bypass: direct.concat(['localhost', '127.0.0.1']).join(',') } } : {};
+  for (const t of tries) { try { return await chromium.launch(Object.assign({ args }, proxy, t)); } catch (e) {} }
+  throw new Error('No browser for the UI tests');
 }
 export async function closeBrowser() { if (browserP) { const b = await browserP.catch(() => null); browserP = null; if (b) await b.close(); } }
 

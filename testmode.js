@@ -10,7 +10,13 @@
   - a TEST badge and a debug panel on the page (bottom left on the PC) to switch everything below
   - /api/test/* (this computer only) does the same for scripts and the automated tests in test/:
       POST /api/test/net        {preset: real|wifi|busy|iphone-hotspot|android-hotspot|pc-hotspot|cable|none}
-      POST /api/test/phones     {add: {id, name}} | {remove: id} | {clear: true}   fake phones on the Wi-Fi
+      POST /api/test/phones     {add: {id, name}} a pretend phone asks to connect (Allow it on the page, or below);
+                                {add, paired: true} one that's paired and connected | {remove: id} | {clear: true}
+      POST /api/test/pair       {rotate: true} new QR pairing code | {life: ms} how long codes last (10 min) |
+                                {allow: rid|'all'} | {block: rid|'all'} answer "Allow … to connect?" requests |
+                                {forget: 'all'} unpair every phone (real ones too) | {requestLife: ms} (2 min) |
+                                {clear: true} drop waiting requests and forget blocked addresses (Reset does too)
+                                A request with the header x-phonedrop-ip: <address> pretends to come from there.
       POST /api/test/throttle   {bps}            slow every file download to bps bytes/s (0 = off)
       POST /api/test/faults     {cutAfter, cutCount, diskFull, grace}   cut the next cutCount downloads after
                                 cutAfter bytes (like Wi-Fi dropping); uploads fail with "disk full"; grace = ms
@@ -233,7 +239,8 @@ T.route = async function (req, res, p) {
   if (b === null) return out(400, { error: 'bad JSON' });
   switch (p) {
     case '/api/test': return out(200, { net: T.net ? T.net.preset : 'real', presets: ['real'].concat(Object.keys(NETS)), throttle: T.throttle, cut: T.cut,
-      diskFull: T.diskFull, grace: T.grace, release: T.release, phones: S.devList(), stats: T.stats, version: S.VERSION, data: S.BASE, pid: process.pid });
+      diskFull: T.diskFull, grace: T.grace, release: T.release, phones: S.devList(), paired: S.phoneList(), requests: S.requestList(), pair: S.pairInfo(),
+      stats: T.stats, version: S.VERSION, data: S.BASE, pid: process.pid });
     case '/api/test/stats': return out(200, T.stats);
     case '/api/test/net': {
       if (b.preset && b.preset !== 'real' && !NETS[b.preset]) return out(400, { error: 'unknown preset', presets: ['real'].concat(Object.keys(NETS)) });
@@ -241,11 +248,25 @@ T.route = async function (req, res, p) {
       await S.watchNet(true);
       return out(200, S.netInfo());
     }
-    case '/api/test/phones':
-      if (b.add) S.addFakePhone(String(b.add.id || 'test-' + Math.random().toString(36).slice(2, 6)), String(b.add.name || 'iPhone'));
+    case '/api/test/phones': {
+      let rid = null;
+      if (b.add) {
+        const id = String(b.add.id || 'test-' + Math.random().toString(36).slice(2, 6)), name = String(b.add.name || 'iPhone');
+        if (b.paired) S.pairFake(id, name); else rid = S.fakeRequest(id, name);
+      }
       if (b.remove) S.removeFakePhone(String(b.remove));
       if (b.clear) S.removeFakePhone(null);
-      return out(200, S.devList());
+      return out(200, { phones: S.devList(), rid, requests: S.requestList() });
+    }
+    case '/api/test/pair': {
+      if (b.life) S.setPairLife(Math.max(1000, Number(b.life) || 600000));
+      if (b.requestLife) S.setRequestLife(Math.max(500, Number(b.requestLife) || 120000));
+      if (b.rotate) S.rotateCode();
+      for (const k of ['allow', 'block']) if (b[k]) for (const r of S.requestList()) if (b[k] === 'all' || b[k] === r.rid) S.answerRequest(r.rid, k === 'allow');
+      if (b.forget === 'all') S.forgetPhones();
+      if (b.clear) S.clearRequests();
+      return out(200, { pair: S.pairInfo(), requests: S.requestList(), phones: S.phoneList() });
+    }
     case '/api/test/throttle': T.throttle = Math.max(0, Number(b.bps) || 0); return out(200, { throttle: T.throttle });
     case '/api/test/faults':
       if ('cutAfter' in b || 'cutCount' in b) T.cut = Number(b.cutCount) > 0 ? { after: Number(b.cutAfter) || 0, count: Number(b.cutCount) } : null;
@@ -261,7 +282,7 @@ T.route = async function (req, res, p) {
     case '/api/test/quit': out(200, { ok: true }); return setTimeout(() => process.exit(0), 100);
     case '/api/test/reset':
       T.net = null; T.throttle = 0; T.cut = null; T.diskFull = false; T.grace = 8000; T.release = null; T.stats = freshStats();
-      S.resetUpdate(); S.removeFakePhone(null); S.clearAll(); await S.watchNet(true);
+      S.resetUpdate(); S.removeFakePhone(null); S.clearRequests(); S.clearAll(); await S.watchNet(true);
       return out(200, { ok: true });
   }
   out(404, { error: 'unknown test control' });

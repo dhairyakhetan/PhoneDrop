@@ -74,6 +74,8 @@ button:focus-visible,a:focus-visible,label:focus-visible{outline:2px solid var(-
   border-bottom:1px solid var(--line);padding-top:var(--sat)}
 .bar-in{max-width:1240px;margin:0 auto;height:58px;display:flex;align-items:center;gap:12px;padding:0 20px}
 .brand{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
+.bar-acts{display:flex;align-items:center;gap:8px;flex:none}
+@media (max-width:760px){#phonesBtn span{display:none}#phonesBtn{width:36px;padding:0;justify-content:center}}
 .logo{width:34px;height:34px;flex:none;display:block}
 .brand-t{min-width:0}
 .brand-t b{display:block;font-size:16px;letter-spacing:-.01em}
@@ -375,7 +377,7 @@ button:focus-visible,a:focus-visible,label:focus-visible{outline:2px solid var(-
   .qr{width:152px;height:152px}
 }
 @media (max-width:900px){
-  .hero{grid-template-columns:1fr}
+  .hero{grid-template-columns:minmax(0,1fr)}
   .drop{padding:26px 22px}
 }
 @media (max-width:760px){
@@ -442,6 +444,25 @@ button:focus-visible,a:focus-visible,label:focus-visible{outline:2px solid var(-
 .tpanel input[type=text]{width:76px}
 .tpanel label{display:inline-flex;align-items:center;gap:6px;color:var(--mute)}
 .tpanel pre{margin:0;white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;color:var(--mute)}
+/* pairing: "Allow … to connect?" cards and the Phones list on the PC, the waiting screen on a phone */
+.preq{display:flex;align-items:center;gap:12px;padding:12px 12px 12px 14px;margin-bottom:16px;border-radius:18px;background:rgba(245,165,36,.1);border-color:rgba(245,165,36,.4)}
+.preq .u-ic{background:#f5a524}
+@media (max-width:760px){.preq{flex-wrap:wrap}.preq .u-t{flex-basis:calc(100% - 56px)}}
+.plist{display:flex;flex-direction:column;gap:2px;margin:4px 0 10px}
+.prow{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.prow:last-child{border-bottom:0}
+.prow .pt{flex:1;min-width:0}
+.prow .pt b{display:block;font-size:15px}
+.prow .pt span{display:block;font-size:13px;color:var(--mute)}
+.prow .on{color:var(--ok)}
+body.unpaired .wrap,body.unpaired #dock,body.unpaired #selBtn,body.unpaired #phonesBtn,body.unpaired #secure,body.unpaired #lost{display:none!important}
+.pairscr{max-width:440px;margin:32px auto;padding:0 16px;text-align:center}
+.pairscr .card{padding:30px 22px 22px}
+.pairscr .ps-logo{width:64px;height:64px;display:block;margin:0 auto}
+.pairscr h2{font-size:21px;line-height:1.25;margin:16px 0 8px}
+.pairscr p{color:var(--mute);font-size:15px;line-height:1.5;margin:0 auto 18px;max-width:340px}
+.pairscr .btn{margin:0 auto 10px}
+.ps-spin{width:26px;height:26px;border:3px solid var(--line2);border-top-color:var(--acc);border-radius:50%;margin:4px auto 18px;animation:sp 1s linear infinite}
 [hidden],.mobile [hidden]{display:none!important}
 </style>
 </head>
@@ -452,8 +473,18 @@ button:focus-visible,a:focus-visible,label:focus-visible{outline:2px solid var(-
     <img class="logo" src="/icon.svg" alt="">
     <div class="brand-t"><b>PhoneDrop</b><span id="sub"><i class="live off" id="live"></i>Connecting…</span></div>
   </div>
-  <button class="btn sm tint" id="selBtn" hidden>Select</button>
+  <div class="bar-acts"><button class="btn sm ghost desk-only" id="phonesBtn" hidden></button><button class="btn sm tint" id="selBtn" hidden>Select</button></div>
 </div></header>
+
+<!-- a phone that isn't paired yet (or was removed on the computer) sees only this -->
+<section class="pairscr" id="pairScr" hidden><div class="card">
+  <img class="ps-logo" src="/icon.svg" alt="">
+  <h2 id="psT">Connecting…</h2>
+  <div class="ps-spin" id="psSpin"></div>
+  <p id="psP"></p>
+  <button class="btn primary" id="psGo" hidden>Ask again</button>
+  <button class="help" id="psHelp">Phone can’t connect?</button>
+</div></section>
 
 <div class="banner warn mob-flex" id="lost" hidden>
   <div class="b-ic" id="lostIc"></div>
@@ -467,6 +498,7 @@ button:focus-visible,a:focus-visible,label:focus-visible{outline:2px solid var(-
 </div>
 
 <div class="wrap">
+  <div class="desk-only" id="preqs"></div>
   <section class="card upd desk-only" id="upd" hidden>
     <div class="u-ic" id="updIc"></div>
     <div class="u-t"><b id="updT"></b><span id="updS"></span><div class="up-bar" id="updBar" hidden><i id="updF"></i></div></div>
@@ -642,6 +674,7 @@ var IC = {
   hotspot: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1.8"/><path d="M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7M5.6 18.4a9 9 0 0 1 0-12.8M18.4 5.6a9 9 0 0 1 0 12.8"/></svg>',
   cable: '<svg class="i" viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0z"/><path d="M12 17v4"/></svg>',
   update: '<svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66L20 8.5"/><path d="M20 3.5v5h-5"/></svg>',
+  phone: '<svg class="i" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18h2"/></svg>',
   spin: '<svg class="i" viewBox="0 0 24 24" style="animation:sp 1s linear infinite"><path d="M12 3a9 9 0 1 0 9 9"/></svg>'
 };
 var st = document.createElement('style'); st.textContent = '@keyframes sp{to{transform:rotate(360deg)}}'; document.head.appendChild(st);
@@ -701,12 +734,14 @@ function confirmBox(title, text, yes){
   return sheet({ title: title, text: text, actions: [{ label: 'Cancel' }, { label: yes || 'Delete', cls: 'solid-danger' }] }).then(function(i){ return i === 1; });
 }
 function showHelp(){
-  var n = curNet(), w = n && n.ssid && n.hotspot !== 'pc' ? 'the Wi-Fi <b>' + esc(n.ssid) + '</b>' : 'the <b>same Wi-Fi</b> as this computer';
+  var n = curNet(), w = n && n.ssid && n.hotspot !== 'pc' ? 'the Wi-Fi <b>' + esc(n.ssid) + '</b>' : 'the <b>same Wi-Fi</b> as the computer';
   sheet({ title: 'Phone can’t connect?', actions: [{ label: 'Got it', cls: 'primary' }], html:
     '<ul>' +
+    '<li>New phone? <b>Scan the QR code</b> in PhoneDrop on the computer: that connects it straight away. Typed the address by hand? Then the computer asks first: click <b>Allow</b> there. Only phones you allowed can see the files.</li>' +
     '<li>Is the phone on ' + w + '? Phones sometimes switch to mobile data or another network by themselves.</li>' +
     '<li>No Wi-Fi, or guest, hotel or office Wi-Fi (those often block devices from seeing each other)? Use your <b>phone’s hotspot</b>: turn it on, connect this computer to it, then scan the new code here. PhoneDrop switches by itself.</li>' +
     '<li>iPhone says “not private”? Tap <b>Show Details → visit this website</b>. That’s expected for your own computer.</li>' +
+    '<li>Was it removed on the computer, or is the computer on a different network now? Scan the QR code again.</li>' +
     '<li>Page won’t load at all? Windows Firewall may be blocking it. Search Windows for <b>Allow an app through Windows Firewall</b>, find <b>PhoneDrop</b> (or <b>Node.js</b>) and tick both <b>Private</b> and <b>Public</b>.</li>' +
     '</ul>' });
 }
@@ -750,7 +785,8 @@ function showLink(){
     return '<button class="chip' + (x === n ? ' on' : '') + '" data-ip="' + esc(x.ip) + '">' + esc(label) + '</button>';
   }).join('');
   if (!n) return;
-  var u = ios && n.https ? n.https : n.http, q = '/qr.svg?u=' + enc(u);
+  // the link carries the pairing code (it changes every 10 minutes): opening it pairs the phone with no click here
+  var u = (ios && n.https ? n.https : n.http) + (info.pair ? '/#p=' + info.pair.code : ''), q = '/qr.svg?u=' + enc(u);
   $('link').textContent = u;
   if ($('qr').getAttribute('src') !== q) $('qr').setAttribute('src', q);
   $('note').innerHTML = IC.info + '<span>' + (!ios
@@ -763,20 +799,126 @@ function applyNet(d){
   ['ip', 'http', 'https', 'nets'].forEach(function(k){ if (k in d) info[k] = d[k]; });
   showLink(); renderChrome();
 }
-fetch('/api/info').then(function(r){ return r.json(); }).then(function(i){
-  info = i;
-  var port = function(u){ return u ? u.split(':').pop() : ''; };
-  // Android doesn't need the secure link (it only matters for iPhone's Save to Photos), so skip its warning
-  if (isAndroid && location.protocol === 'https:') { location.replace('http://' + location.hostname + ':' + port(i.http) + location.pathname + location.search); return; }
-  renderFoot();
-  showLink();
-  renderChrome();
-  setUpdate(i.update);
-  if (isIOS && !window.isSecureContext && i.https) {
-    $('secure').hidden = false;
-    $('secureGo').href = 'https://' + location.hostname + ':' + port(i.https) + '/';
-  }
-}).catch(function(){});
+// start: ask the computer who we are. Paired (or this PC itself) -> the normal page; else the pairing screen.
+var hashRaw = location.hash.replace(/^#/, ''), hp = {};
+hashRaw.split('&').forEach(function(kv){ var i = kv.indexOf('='); if (i > 0) { try { hp[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)); } catch (e) {} } });
+// keep the one-time code out of the address bar (and out of bookmarks and screenshots)
+if (hashRaw) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
+function boot(){
+  fetch('/api/info', { cache: 'no-store' }).then(function(r){ return r.json(); }).then(function(i){
+    // Android doesn't need the secure link (it only matters for iPhone's Save to Photos), so skip its warning
+    if (isAndroid && location.protocol === 'https:' && i.httpPort) { location.replace('http://' + location.hostname + ':' + i.httpPort + location.pathname + location.search + (hashRaw ? '#' + hashRaw : '')); return; }
+    if (!i.paired) { info = i; return pairing(); }
+    info = i;
+    document.body.classList.remove('unpaired'); $('pairScr').hidden = true;
+    renderFoot();
+    showLink();
+    renderChrome();
+    renderPairing();
+    setUpdate(i.update);
+    if (isIOS && !window.isSecureContext && i.https) {
+      $('secure').hidden = false;
+      $('secureGo').href = 'https://' + location.hostname + ':' + i.https.split(':').pop() + '/';
+    }
+    startLive();
+  }).catch(function(){ setTimeout(boot, 3000); });   // the computer isn't reachable (yet): try again
+}
+// iPhone on the http link -> the https one (needed for Save to Photos). That's a different origin, so the phone
+// takes a one-time code along that keeps it paired there.
+function goSecure(){
+  var to = $('secureGo').href;
+  postJSON('/api/pair/handoff').then(function(r){ location.href = to + (r && r.code ? '#h=' + r.code : ''); }, function(){ location.href = to; });
+}
+$('secureGo').onclick = function(e){ e.preventDefault(); goSecure(); };
+function postJSON(u, b){
+  return fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) }).then(function(r){
+    return r.json().catch(function(){ return {}; }).then(function(j){ j._status = r.status; return j; });
+  });
+}
+
+/* ================= pairing ================= */
+// A phone pairs once: the QR code's link carries a code (#p=…) that pairs it straight away; without one it asks,
+// and the computer shows "Allow <iPhone> to connect?". The computer then gives it a token in a cookie.
+var pairT = 0;
+function pairScreen(state){
+  var host = '<b>' + esc((info && info.host) || 'the computer') + '</b>';
+  var S = {
+    connecting: ['Connecting…', ''],
+    waiting: ['Waiting for the computer to allow this phone…', 'On ' + host + ', click <b>Allow</b> in PhoneDrop. Next time, scan the QR code there instead: it connects straight away.'],
+    busy: ['The computer has too many requests right now', 'Trying again in a moment…'],
+    offline: ['Can’t reach the computer', 'Make sure this phone is on the same Wi-Fi as ' + host + ' and PhoneDrop is open there. Trying again…'],
+    blocked: ['The computer didn’t allow this phone', 'Ask the person at ' + host + ' to click <b>Allow</b>, or scan the QR code in PhoneDrop there.'],
+    expired: ['Nobody answered in time', 'Ask again and click <b>Allow</b> on ' + host + ', or scan the QR code in PhoneDrop there.'],
+    removed: ['This phone isn’t allowed any more', 'It was removed on ' + host + '. Scan the QR code in PhoneDrop there to connect again.']
+  }[state] || ['Connecting…', ''];
+  document.body.classList.add('unpaired'); $('pairScr').hidden = false;
+  $('sub').innerHTML = '<i class="live off" id="live"></i>'; $('sub').appendChild(document.createTextNode('Not connected yet'));
+  $('psT').textContent = S[0]; $('psP').innerHTML = S[1]; $('psP').hidden = !S[1];
+  $('psSpin').hidden = ['blocked', 'expired', 'removed'].indexOf(state) >= 0;
+  $('psGo').hidden = !$('psSpin').hidden;
+  $('psGo').textContent = state === 'removed' ? 'Ask to connect' : 'Ask again';
+  $('pairScr').dataset.state = state;
+}
+function pairing(state){
+  stopLive(); clearTimeout(pairT);
+  if (state) return pairScreen(state);   // e.g. removed: wait for the user
+  var b = { id: myId, name: myName };
+  if (hp.p) b.code = hp.p;
+  if (hp.h) b.handoff = hp.h;
+  hp = {};   // a code works once
+  pairScreen(b.code || b.handoff ? 'connecting' : 'waiting');
+  pairAsk(b);
+}
+function pairAsk(b){
+  postJSON('/api/pair', b).then(function(r){
+    clearTimeout(pairT);
+    if (r.paired) return boot();
+    if (r.status === 'waiting') { pairScreen('waiting'); pairT = setTimeout(function(){ pairAsk({ id: myId, name: myName, rid: r.rid, secret: r.secret }); }, 1500); }
+    else if (r.status === 'busy') { pairScreen('busy'); pairT = setTimeout(function(){ pairAsk({ id: myId, name: myName }); }, 15000); }
+    else pairScreen(r.status === 'blocked' ? 'blocked' : 'expired');
+  }, function(){ pairScreen('offline'); pairT = setTimeout(function(){ pairAsk(b); }, 3000); });
+}
+$('psGo').onclick = function(){ pairing(); };
+$('psHelp').onclick = showHelp;
+// PC: "Allow <iPhone> to connect?" cards, and the Phones button (paired phones, Remove)
+var phonesOpen = false;
+function renderPairing(){
+  if (!info || !info.pair) return;   // only this PC gets these
+  $('preqs').innerHTML = (info.requests || []).map(function(r){
+    return '<section class="card preq"><div class="u-ic">' + IC.phone + '</div><div class="u-t"><b>Allow ' + esc(r.name) + ' to connect?</b>' +
+      '<span>Someone opened PhoneDrop’s address on ' + esc(r.ip) + ' without the QR code. Only allow phones you know.</span></div>' +
+      '<button class="btn" data-block="' + esc(r.rid) + '">Block</button><button class="btn primary" data-allow="' + esc(r.rid) + '">Allow</button></section>';
+  }).join('');
+  var n = (info.phones || []).length;
+  $('phonesBtn').hidden = !n;
+  setBtn($('phonesBtn'), IC.phone, n === 1 ? '1 phone' : n + ' phones');
+  if (phonesOpen) $('mP').innerHTML = phonesHtml();
+}
+$('preqs').onclick = function(e){
+  var b = e.target.closest('button'); if (!b) return;
+  var allow = !!b.dataset.allow, rid = b.dataset.allow || b.dataset.block;
+  postJSON(allow ? '/api/pair/allow' : '/api/pair/block', { rid: rid }).then(function(){ if (!allow) toast('Blocked for 10 minutes'); });
+};
+function ago(t){
+  var s = (Date.now() - t) / 1000;
+  return s < 90 ? 'just now' : s < 3600 ? Math.round(s / 60) + ' min ago' : s < 86400 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' days ago';
+}
+function phonesHtml(){
+  var l = (info && info.phones) || [];
+  if (!l.length) return '<p>No phones yet. Scan the QR code with a phone to pair it.</p>';
+  return '<div class="plist">' + l.map(function(d){
+    return '<div class="prow"><div class="pt"><b>' + esc(d.name) + '</b><span>' + (d.online ? '<span class="on">Connected now</span>' : 'Last seen ' + ago(d.seen)) +
+      ' · paired ' + new Date(d.created).toLocaleDateString() + '</span></div><button class="btn sm ghost danger" data-pid="' + esc(d.pid) + '">Remove</button></div>';
+  }).join('') + '</div><p class="faint">A removed phone is disconnected at once. To use it again, scan the QR code with it.</p>';
+}
+$('phonesBtn').onclick = function(){
+  phonesOpen = true;
+  sheet({ title: 'Paired phones', html: phonesHtml(), actions: [{ label: 'Done', cls: 'primary' }] }).then(function(){ phonesOpen = false; });
+};
+$('mP').addEventListener('click', function(e){
+  var b = phonesOpen && e.target.closest('button[data-pid]'); if (!b) return;
+  postJSON('/api/phones/remove', { pid: b.dataset.pid }).then(function(){ toast('Removed. It has to scan the QR code to connect again.'); });
+});
 $('seg').addEventListener('click', function(e){
   var b = e.target.closest('button'); if (!b) return;
   phoneKind = b.dataset.k; try { localStorage.setItem('pd.phone', phoneKind); } catch (x) {}
@@ -812,7 +954,10 @@ function showLost(){
   $('lost').hidden = false;
 }
 function load(){
-  return fetch('/api/files', { cache: 'no-store' }).then(function(r){ return r.text(); }).then(function(t){
+  return fetch('/api/files', { cache: 'no-store' }).then(function(r){
+    if (r.status === 401) { pairing('removed'); throw 'unpaired'; }
+    return r.text();
+  }).then(function(t){
     setLive(true);
     if (t === lastJSON) return;
     lastJSON = t;
@@ -825,11 +970,21 @@ function load(){
     seen = {}; files.forEach(function(f){ seen[f.name] = 1; });
     if (files.length) { var live = {}; files.forEach(function(f){ live[key(f)] = 1; }); for (var k in saved) if (!live[k]) delete saved[k]; persistSaved(); }
     reconcile();
-  }).catch(function(){ setLive(false); });
+  }).catch(function(e){ if (e !== 'unpaired') setLive(false); });
 }
-try {
-  var es = new EventSource('/api/events?id=' + enc(myId) + '&name=' + enc(myName));
-  es.onmessage = load; es.onopen = function(){ setLive(true); load(); dlWake(); }; es.onerror = function(){ setLive(false); };
+var live = false, es = null;
+function stopLive(){ live = false; if (es) { es.close(); es = null; } setLive(true); }
+function startLive(){
+  if (live) return;
+  live = true;
+  load();
+  try { listen(); } catch (e) {}
+}
+function listen(){
+  es = new EventSource('/api/events?id=' + enc(myId) + '&name=' + enc(myName));
+  es.onmessage = load; es.onopen = function(){ setLive(true); load(); dlWake(); };
+  // closed for good (e.g. this phone was removed on the computer): load() finds out why
+  es.onerror = function(){ setLive(false); if (es && es.readyState === 2) load(); };
   var firstDevices = true;
   es.addEventListener('devices', function(e){
     var list = []; try { list = JSON.parse(e.data); } catch (x) {}
@@ -848,9 +1003,14 @@ try {
   es.addEventListener('net', function(e){ try { applyNet(JSON.parse(e.data)); } catch (x) {} });
   es.addEventListener('update', function(e){ try { setUpdate(JSON.parse(e.data)); } catch (x) {} });
   es.addEventListener('update-progress', function(e){ try { updProgress(JSON.parse(e.data)); } catch (x) {} });
-} catch (e) {}
-setInterval(function(){ if (!document.hidden) load(); }, 15000);
-document.addEventListener('visibilitychange', function(){ if (!document.hidden) load(); });
+  // this PC only: the QR code's new pairing code, phones asking to connect, the paired phones
+  es.addEventListener('pair', function(e){ try { info.pair = JSON.parse(e.data); showLink(); } catch (x) {} });
+  es.addEventListener('pair-requests', function(e){ try { info.requests = JSON.parse(e.data); renderPairing(); } catch (x) {} });
+  es.addEventListener('phones', function(e){ try { info.phones = JSON.parse(e.data); renderPairing(); } catch (x) {} });
+  es.addEventListener('paired', function(e){ try { toast(JSON.parse(e.data).name + ' is paired'); } catch (x) {} });
+}
+setInterval(function(){ if (live && !document.hidden) load(); }, 15000);
+document.addEventListener('visibilitychange', function(){ if (live && !document.hidden) load(); });
 
 /* ================= grid (keyed: tiles are created once, never redrawn) ================= */
 function makeTile(f){
@@ -1188,6 +1348,7 @@ function dlRun(d){
     if (d.got > f.size || (e && e.status === 416)) dlReset(d);
     var moved = d.got > before;
     if (moved) d.tries = 0; else if (!document.hidden) d.tries++;   // a locked phone doesn't count against it
+    if (e && e.status === 401) { d.failed = true; dlSettle(d, null, e); pairing('removed'); return; }   // removed on the computer
     if ((e && e.status === 404) || d.tries >= RETRY.length) { d.failed = true; dlSettle(d, null, e); }
     else d.timer = setTimeout(function(){ d.timer = 0; dlPump(); }, moved ? 200 : document.hidden ? 5000 : RETRY[d.tries]);
     dlAfter();
@@ -1334,7 +1495,7 @@ function saveBlobs(fl){
 
 $('save').onclick = function(){
   if (dockMode === 'send') return $('pickPhone').click();
-  if (dockMode === 'secure') { location.href = $('secureGo').href; return; }
+  if (dockMode === 'secure') { goSecure(); return; }
   if (dockMode === 'selectfiles') { setSelecting(true); return; }
   if (dockMode === 'again') {
     var mine = files.filter(function(f){ return saved[key(f)]; });
@@ -1627,6 +1788,7 @@ function upOne(file){
     }).then(function(){ U.done++; if (byName[t._final]) removePending(t); }, function(err){
     var msg = err && err.message;
     if (msg === 'cancelled') { removePending(t); return; }
+    if (msg === 'not paired') pairing('removed');
     U.failed++; t.classList.add('err');
     t.querySelector('.perr').textContent = msg === 'disk full' ? 'Disk full' : 'Failed';
     if (msg === 'disk full') toast('The computer’s disk is full');
@@ -1878,7 +2040,8 @@ if (window.PD_TEST) (function(){
       var r = t.release || {};
       pn.innerHTML =
         '<h4>Network of this computer</h4><div class="trow">' + sel_('tNet', t.presets.map(function(p){ return [p, p === 'real' ? 'real network' : p]; }), t.net) + '</div>' +
-        '<h4>Phones on the Wi-Fi</h4><div class="trow">' + b_('iphone', '+ iPhone') + b_('android', '+ Android') + b_('nophones', 'Remove fake phones') + '</div>' +
+        '<h4>Pretend phones</h4><div class="trow">' + b_('iphone', '+ iPhone asks to connect') + b_('android', '+ paired Android') + b_('nophones', 'Remove pretend phones') + '</div>' +
+        '<h4>Pairing</h4><div class="trow">' + b_('allowall', 'Allow all') + b_('blockall', 'Block all') + b_('forget', 'Unpair every phone') + b_('rotate', 'New QR code') + '</div>' +
         '<h4>Downloads (all of them)</h4><div class="trow">' + sel_('tThr', [[0, 'full speed'], [52428800, '50 MB/s'], [8388608, '8 MB/s (good Wi-Fi)'], [1048576, '1 MB/s'], [204800, '200 KB/s']], t.throttle) +
           b_('cut', 'Cut the next 3 at 1 MB') + '<label><input type="checkbox" id="tDisk"' + (t.diskFull ? ' checked' : '') + '> uploads: disk full</label></div>' +
         '<h4>Add files</h4><div class="trow">' + b_('photos', '+ 6 photos') + b_('docs', '+ 3 files') + b_('big', '+ 400 MB video') + '</div>' +
@@ -1895,7 +2058,8 @@ if (window.PD_TEST) (function(){
     e.textContent = 'PhoneDrop ' + t.version + ' · pid ' + t.pid + '\n' + t.data + '\n' +
       'requests ' + s.requests + ' · downloads ' + s.downloads + ' · sent ' + fmt(s.bytesSent) + '\n' +
       'cut off ' + s.cut + ' · resumed (Range) ' + s.ranges + ' · closed early ' + s.closedEarly + ' · uploads ' + s.uploads + '\n' +
-      'phones: ' + (t.phones.map(function(p){ return p.name; }).join(', ') || 'none') + (t.cut ? '\nnext ' + t.cut.count + ' downloads get cut at ' + fmt(t.cut.after) : '');
+      'connected: ' + (t.phones.map(function(p){ return p.name; }).join(', ') || 'none') + ' · paired: ' + t.paired.length + ' · asking: ' + t.requests.length +
+      '\nQR code ' + t.pair.code + ' (new in ' + Math.max(0, Math.round((t.pair.expires - Date.now()) / 1000)) + ' s)' + (t.cut ? '\nnext ' + t.cut.count + ' downloads get cut at ' + fmt(t.cut.after) : '');
   }
   function refresh(){ if (!pn.hidden) api('').then(stats, function(){}); }
   pn.addEventListener('change', function(e){
@@ -1909,7 +2073,11 @@ if (window.PD_TEST) (function(){
     var a = b.dataset.a, n = Math.random().toString(36).slice(2, 6);
     var acts = {
       iphone: function(){ return api('/phones', { add: { id: 'iphone-' + n, name: 'iPhone' } }); },
-      android: function(){ return api('/phones', { add: { id: 'android-' + n, name: 'Android phone' } }); },
+      android: function(){ return api('/phones', { add: { id: 'android-' + n, name: 'Android phone' }, paired: true }); },
+      allowall: function(){ return api('/pair', { allow: 'all' }); },
+      blockall: function(){ return api('/pair', { block: 'all' }); },
+      forget: function(){ return api('/pair', { forget: 'all' }).then(function(){ toast('Every phone has to pair again'); }); },
+      rotate: function(){ return api('/pair', { rotate: true }); },
       nophones: function(){ return api('/phones', { clear: true }); },
       cut: function(){ return api('/faults', { cutAfter: 1048576, cutCount: 3 }).then(function(){ toast('The next 3 downloads get cut off at 1 MB'); }); },
       photos: function(){ return api('/samples', { photos: 6 }); },
@@ -1933,7 +2101,7 @@ if (window.PD_TEST) (function(){
 
 if (isMobile) $('dock').hidden = false;
 renderChrome();
-load();
+boot();
 })();
 </script>
 </body>

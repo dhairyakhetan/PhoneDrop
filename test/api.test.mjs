@@ -266,6 +266,7 @@ test('thumbnails: unknown file 404, too big 413, empty body is fine', async () =
 
 test('phone → PC: the sending phone is remembered; downloaded to the PC = transferred', async () => {
   await reset();
+  const PHONE = await s.phone('iPhone', 'phone-1');
   const data = randomFile(50000);
   await upload(s.url, 'from-phone.jpg', data, '&from=phone-1&fromName=iPhone', PHONE);
   let [f] = await files();
@@ -292,6 +293,7 @@ test('saved by phones: counted per phone, bad requests rejected', async () => {
   await upload(s.url, 'a.jpg', randomFile(10));
   const ev = events(s.url);
   await ev.next('devices');
+  const PHONE = await s.phone();
   assert.equal((await s.api('/api/saved', { id: 'p1', name: 'iPhone', files: ['a.jpg', 'missing.jpg'], media: true }, PHONE)).status, 200);
   const e = await ev.next('saved');
   assert.deepEqual(e, { name: 'iPhone', count: 1, media: true });
@@ -336,6 +338,7 @@ test('phones come and go (and a screen lock or reload isn’t "leaving")', async
   await s.api('/api/test/faults', { grace: 600 });
   const pc = events(s.url);
   assert.deepEqual(await pc.next('devices'), []);
+  const PHONE = await s.phone('iPhone', 'ph1');
   const phone = events(s.url, '?id=ph1&name=iPhone', PHONE);
   assert.deepEqual(await pc.next('devices', (d) => d.length === 1), [{ id: 'ph1', name: 'iPhone' }]);
   // a second tab of the same phone, then a reload: still one phone, and no "left" in between
@@ -356,11 +359,20 @@ test('phones come and go (and a screen lock or reload isn’t "leaving")', async
 });
 const devicesNow = (r) => r.body.phones.map((p) => p.name);
 
-test('fake phones from test mode show up like real ones', async () => {
+test('pretend phones from test mode go through pairing like real ones', async () => {
   await reset();
   const pc = events(s.url);
   await pc.next('devices');
-  await s.api('/api/test/phones', { add: { id: 'f1', name: 'Android phone' } });
+  // one that asks to connect: the PC hears "Allow … to connect?", Allow pairs it and it connects
+  const { rid } = (await s.api('/api/test/phones', { add: { id: 'f2', name: 'iPhone' } })).body;
+  assert.equal((await pc.next('pair-requests', (d) => d.length === 1))[0].name, 'iPhone');
+  assert.equal((await s.api('/api/pair/allow', { rid })).status, 200);
+  assert.deepEqual(await pc.next('devices', (d) => d.length === 1), [{ id: 'f2', name: 'iPhone' }]);
+  assert.ok((await s.api('/api/phones')).body.some((p) => p.name === 'iPhone'));
+  await s.api('/api/test/phones', { clear: true });
+  await pc.next('devices', (d) => d.length === 0);
+  // one that's paired and connected straight away
+  await s.api('/api/test/phones', { add: { id: 'f1', name: 'Android phone' }, paired: true });
   assert.deepEqual(await pc.next('devices', (d) => d.length === 1), [{ id: 'f1', name: 'Android phone' }]);
   await s.api('/api/test/phones', { clear: true });
   assert.deepEqual(await pc.next('devices', (d) => d.length === 0), []);
@@ -368,6 +380,7 @@ test('fake phones from test mode show up like real ones', async () => {
 });
 
 test('only this PC may install updates or use the test controls', async () => {
+  const PHONE = await s.phone();
   const phone = await s.api('/api/update/install', {}, PHONE);
   assert.equal(phone.status, 403);
   const site = await s.api('/api/update/install', {}, { Origin: 'http://evil.example' });

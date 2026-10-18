@@ -4,7 +4,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startServer, browser, closeBrowser, waitFor, sleep, sha, IOS_UA, ANDROID_UA, upload, randomFile } from './helpers.mjs';
+import { startServer, browser, browserWith, closeBrowser, waitFor, sleep, sha, IOS_UA, ANDROID_UA, upload, randomFile } from './helpers.mjs';
 
 let s;
 before(async () => { s = await startServer(); await browser(); });
@@ -43,7 +43,8 @@ async function open(kind, o = {}) {
   page.on('pageerror', (e) => page.errors.push(e.message));
   page.downloads = [];
   page.on('download', async (d) => { const p = await d.path(); page.downloads.push({ name: d.suggestedFilename(), sha: sha(fs.readFileSync(p)) }); });
-  await page.goto(s.url + (o.path || '/'));
+  // phones open the QR code's link (it pairs them), unless a test wants an unpaired one
+  await page.goto(s.url + (o.path || (phone && !o.unpaired ? '/#p=' + (await s.pairCode()) : '/')));
   return page;
 }
 async function closeAll() { while (contexts.length) await contexts.pop().close().catch(() => {}); }
@@ -69,8 +70,12 @@ test('PC: test badge, SVG logo, debug panel switches the network and adds phones
   await pc.selectOption('#tNet', 'busy');
   await waitFor(async () => /Wi-Fi HomeNet/.test(await text(pc, '#netLine')), 8000, 'Wi-Fi line');
   assert.match(await text(pc, '#link'), /^http:\/\/192\.168\.1\.23:/);
-  await pc.click('button[data-a=iphone]');
+  await pc.click('button[data-a=iphone]'); // a pretend iPhone asks to connect: the PC shows Allow / Block
+  await pc.waitForSelector('#preqs .preq');
+  assert.equal(await text(pc, '#preqs .preq b'), 'Allow iPhone to connect?');
+  await pc.click('#preqs [data-allow]');
   await pc.waitForSelector('#slim:not([hidden])');
+  assert.equal(await pc.$$eval('#preqs .preq', (x) => x.length), 0);
   assert.equal(await text(pc, '#slimT'), 'iPhone connected');
   await pc.click('button[data-a=nophones]');
   await pc.waitForSelector('#hero:not([hidden])', { timeout: 15000 });
@@ -374,7 +379,7 @@ test('phone loses the computer: says which Wi-Fi to be on, and recovers by itsel
     const b = await browser();
     const ctx = await b.newContext({ userAgent: ANDROID_UA, isMobile: true, hasTouch: true, viewport: { width: 393, height: 852 } });
     const an = await ctx.newPage();
-    await an.goto(u.url);
+    await an.goto(u.url + '/#p=' + (await u.pairCode()));
     await an.waitForFunction(() => document.querySelector('#live') && !document.querySelector('#live.off'));
     await u.stop();
     await an.waitForSelector('#lost:not([hidden])', { timeout: 15000 });
@@ -415,12 +420,20 @@ test('layouts: no sideways scrolling at any size, dark and light', async () => {
       if (kind === 'iphone') await ctx.addInitScript(shareStub);
       const p = await ctx.newPage();
       const errs = []; p.on('pageerror', (e) => errs.push(e.message));
-      await p.goto(s.url);
+      await p.goto(s.url + (phone ? '/#p=' + (await s.pairCode()) : ''));
       await p.waitForFunction(() => document.querySelectorAll('#grid .tile').length === 10);
       await sleep(150);
       const over = await p.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert.ok(over <= 0, kind + ' ' + w + '×' + h + ' ' + scheme + ': ' + over + ' px sideways scroll');
       assert.deepEqual(errs, [], kind + ' ' + w + '×' + h);
+      if (phone && w === 320) { // the pairing screen too, on the narrowest phone
+        const u = await (await b.newContext({ viewport: { width: w, height: h }, colorScheme: scheme, isMobile: true, hasTouch: true, userAgent: IOS_UA })).newPage();
+        await u.goto(s.url);
+        await u.waitForSelector('#pairScr:not([hidden])');
+        assert.ok((await u.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)) <= 0, 'pairing screen ' + scheme);
+        await u.context().close();
+        await s.api('/api/test/pair', { clear: true });
+      }
       if (phone) {
         await p.click('#grid .tile:nth-child(2)');
         await p.waitForSelector('#lb:not([hidden])');
@@ -430,4 +443,88 @@ test('layouts: no sideways scrolling at any size, dark and light', async () => {
       await ctx.close();
     }
   }
+});
+
+test('pairing: the QR link carries the code, and the QR code changes with it', async () => {
+  await reset();
+  await s.api('/api/test/pair', { forget: 'all' });
+  const pc = await open('pc');
+  const code = await s.pairCode();
+  await pc.waitForFunction((c) => document.getElementById('link').textContent.endsWith('/#p=' + c), code);
+  assert.match(await pc.$eval('#qr', (i) => decodeURIComponent(i.getAttribute('src'))), new RegExp('#p=' + code + '$'));
+  await s.api('/api/test/pair', { rotate: true });
+  const code2 = await s.pairCode();
+  await pc.waitForFunction((c) => document.getElementById('link').textContent.endsWith('/#p=' + c), code2);
+  // a phone opening that link is in at once, and the code doesn't stay in its address bar
+  const an = await open('android', { path: '/#p=' + code2 });
+  await an.waitForSelector('#dock:not([hidden])');
+  assert.equal(await an.evaluate(() => location.hash), '');
+  assert.equal(await an.$eval('#pairScr', (e) => e.hidden), true);
+  await pc.waitForFunction(() => /^1 phone$/.test(document.getElementById('phonesBtn').textContent));
+  assert.deepEqual(pc.errors.concat(an.errors), []);
+  await closeAll();
+});
+
+test('pairing: a typed address waits for Allow on the PC; Allow lets the phone in', async () => {
+  await reset();
+  await samples({ photos: 2 });
+  const pc = await open('pc');
+  const ip = await open('iphone', { unpaired: true });
+  await ip.waitForFunction(() => /Waiting for the computer to allow this phone/.test(document.getElementById('psT').textContent));
+  assert.equal(await ip.$eval('#grid', (g) => g.children.length), 0, 'nothing shown before it’s allowed');
+  assert.equal(await ip.evaluate(() => getComputedStyle(document.querySelector('.wrap')).display), 'none');
+  assert.ok((await ip.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)) <= 0);
+  await pc.waitForSelector('#preqs .preq');
+  assert.match(await text(pc, '#preqs .preq'), /Allow iPhone to connect\?/);
+  await pc.click('#preqs [data-allow]');
+  await ip.waitForFunction(() => document.querySelectorAll('#grid .tile').length === 2, null, { timeout: 15000 });
+  await waitFor(async () => (await dock(ip)) === 'Save all 2 to Photos', 15000, 'dock ready');
+  await pc.waitForFunction(() => /iPhone (is paired|connected)/.test(document.getElementById('toast').textContent) || !document.getElementById('slim').hidden);
+  await closeAll();
+});
+
+test('pairing: Block keeps the phone out, and Remove on the PC shows a paired phone the door', async () => {
+  await reset();
+  await s.api('/api/test/pair', { forget: 'all' }); // only this test's phone in the Phones list
+  const pc = await open('pc');
+  const stranger = await open('android', { unpaired: true, ctx: { extraHTTPHeaders: { 'x-phonedrop-ip': '10.9.9.9' } } });
+  await pc.waitForSelector('#preqs .preq');
+  await pc.click('#preqs [data-block]');
+  await stranger.waitForFunction(() => document.getElementById('psT').textContent === 'The computer didn’t allow this phone');
+  assert.equal(await stranger.$eval('#psGo', (b) => b.hidden), false);
+  // a paired phone, removed on the PC
+  const an = await open('android');
+  await an.waitForSelector('#dock:not([hidden])');
+  await pc.waitForSelector('#phonesBtn:not([hidden])');
+  await pc.click('#phonesBtn');
+  await pc.waitForSelector('#mP .prow');
+  assert.match(await text(pc, '#mP .prow'), /Android phone/);
+  await pc.click('#mP .prow [data-pid]');
+  await an.waitForFunction(() => document.getElementById('psT').textContent === 'This phone isn’t allowed any more', null, { timeout: 15000 });
+  assert.equal(await an.$eval('#psGo', (b) => b.textContent), 'Ask to connect');
+  await pc.waitForFunction(() => !document.querySelector('#mP .prow'));
+  await closeAll();
+});
+
+test('pairing: an iPhone on the http link switches to https (Save to Photos) and stays paired', async () => {
+  await reset();
+  await samples({ photos: 1 });
+  // a name for 127.0.0.1 that isn't "localhost", so the http page isn't a secure context, like on a real Wi-Fi
+  const b = await browserWith(['--host-resolver-rules=MAP phonedrop.test 127.0.0.1'], ['phonedrop.test']);
+  try {
+    const ctx = await b.newContext({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true, userAgent: IOS_UA, ignoreHTTPSErrors: true });
+    await ctx.addInitScript(shareStub);
+    const ip = await ctx.newPage();
+    await ip.goto('http://phonedrop.test:' + s.port + '/#p=' + (await s.pairCode()));
+    await ip.waitForSelector('#secure:not([hidden])');
+    assert.equal(await ip.evaluate(() => window.isSecureContext), false);
+    const before = (await s.api('/api/phones')).body.length;
+    await ip.click('#secureGo');
+    await waitFor(() => /^https:\/\/phonedrop\.test:\d+\/$/.test(ip.url()), 15000, 'the https page');
+    await waitFor(async () => (await ip.$eval('#t1', (e) => e.textContent)) === 'Save photo to Photos', 15000, 'paired on https');
+    assert.equal(await ip.$eval('#pairScr', (e) => e.hidden), true);
+    assert.equal((await s.api('/api/phones')).body.length, before, 'still the same phone');
+    await ip.click('#save');
+    await ip.waitForFunction(() => window.__shared.length === 1);
+  } finally { await b.close(); }
 });

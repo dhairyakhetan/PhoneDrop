@@ -24,7 +24,7 @@ PhoneDrop is then in the Start Menu. To remove it: Settings → Apps → Install
 ## Use it
 
 1. Open PhoneDrop on the PC and drop in photos, videos or files (or press Ctrl+V to paste).
-2. Pick **Android** or **iPhone** above the QR code, connect the phone to the Wi-Fi it names, and scan the code.
+2. Pick **Android** or **iPhone** above the QR code, connect the phone to the Wi-Fi it names, and scan the code. That also pairs the phone, so next time it just connects. (Typed the address instead? Click **Allow** on the PC.)
 3. **Android:** tap **Save all to phone**. The files go to Downloads and show up in the Gallery.
 4. **iPhone:** the first time, Safari says the connection isn't private. Tap **Show Details → visit this website** (it's your own PC). Then tap **Save all to Photos** and **Save N Images** in the share sheet.
 
@@ -91,7 +91,7 @@ CLAUDE.md            detailed guide to how everything works
 
 ## Privacy and safety
 
-Everything stays on your local network: files go straight from your PC to your phone. There's no login, so anyone on the same Wi-Fi who has the link can see the shared files. Use it on networks you trust.
+Everything stays on your local network: files go straight from your PC to your phone. Only phones you paired can see or send anything: scanning the QR code pairs a phone straight away (the code in it changes every 10 minutes), and someone who types the address by hand has to be allowed on the PC first. The PC lists paired phones under **Phones**, where you can remove one. The Wi-Fi traffic itself isn't encrypted (except the iPhone's secure link), so prefer networks you trust.
 
 ## Credits
 
