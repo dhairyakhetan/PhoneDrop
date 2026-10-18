@@ -10,7 +10,7 @@ Send photos, videos and files from your PC to your phone over Wi-Fi. No cables, 
 
 ## Install (Windows)
 
-1. Download **PhoneDrop-Setup.exe** from the [latest release](https://github.com/YOUR-USERNAME/phonedrop/releases/latest/download/PhoneDrop-Setup.exe).
+1. Download **PhoneDrop-Setup.exe** from the [latest release](https://github.com/dhairyakhetan/PhoneDrop/releases/latest/download/PhoneDrop-Setup.exe).
 2. Run it. Windows may say "Windows protected your PC": click **More info → Run anyway** (the app isn't code-signed). Click **Yes** on the admin prompt.
 3. Follow the wizard and tick **Open PhoneDrop now**.
 
@@ -32,8 +32,8 @@ Closing the PhoneDrop window stops it. Files are cleared the next time it starts
 Needs [Node.js](https://nodejs.org) 22 or newer. No `npm install` needed to run it.
 
 ```
-git clone https://github.com/YOUR-USERNAME/phonedrop.git
-cd phonedrop
+git clone https://github.com/dhairyakhetan/PhoneDrop.git
+cd PhoneDrop
 node server.js
 ```
 

@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "Send photos, videos and files from your PC to your phone over Wi-Fi",
+  "repository": "github:dhairyakhetan/PhoneDrop",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
