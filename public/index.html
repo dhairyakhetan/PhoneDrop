@@ -109,6 +109,23 @@ svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-widt
 .help{color:var(--acc);font-weight:600;font-size:13px;margin-top:10px;padding:4px 0}
 .help:hover{text-decoration:underline}
 .foot{text-align:center;color:var(--faint);font-size:12.5px;margin:30px 0 10px}
+.foot button{color:var(--acc);font-weight:600}
+.foot button:hover{text-decoration:underline}
+
+/* ---------- update banner (desktop, installed app) ---------- */
+.upd{display:flex;align-items:center;gap:12px;padding:12px 12px 12px 14px;margin-bottom:16px;border-radius:18px;background:var(--acc-soft);border-color:rgba(91,140,255,.25)}
+.u-ic{width:42px;height:42px;border-radius:13px;background:var(--acc);color:#fff;display:grid;place-items:center;flex:none}
+.u-ic svg.i{width:22px;height:22px}
+.upd.err{background:var(--danger-soft);border-color:rgba(255,95,87,.25)}
+.upd.err .u-ic{background:var(--danger)}
+.u-t{flex:1;min-width:0}
+.u-t b{display:block;font-size:15px;font-variant-numeric:tabular-nums}
+.u-t span{display:block;font-size:13px;color:var(--mute);font-variant-numeric:tabular-nums}
+.u-t .up-bar{margin-top:8px;max-width:440px}
+.upd .link{font-size:14px;white-space:nowrap;text-decoration:none}
+.notes{max-height:50vh;overflow:auto;margin:0 0 20px;font-size:14px;color:var(--mute);white-space:pre-wrap;overflow-wrap:anywhere}
+.notes b{color:var(--text)}
+@media (max-width:760px){.upd{flex-wrap:wrap}.u-t{flex-basis:calc(100% - 56px)}}
 
 /* ---------- toolbar ---------- */
 .tools{display:flex;align-items:center;gap:6px;margin:0 0 12px;min-height:36px}
@@ -316,6 +333,15 @@ svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-widt
 </div>
 
 <div class="wrap">
+  <section class="card upd desk-only" id="upd" hidden>
+    <div class="u-ic" id="updIc"></div>
+    <div class="u-t"><b id="updT"></b><span id="updS"></span><div class="up-bar" id="updBar" hidden><i id="updF"></i></div></div>
+    <a class="link" id="updMan" target="_blank" rel="noopener" hidden>Download it manually</a>
+    <button class="link" id="updNotes">What’s new</button>
+    <button class="btn" id="updLater">Later</button>
+    <button class="btn primary" id="updGo">Update now</button>
+  </section>
+
   <section class="hero desk-only" id="hero">
     <div class="card connect">
       <div class="qr"><img id="qr" alt="QR code to open PhoneDrop on your phone"></div>
@@ -361,7 +387,7 @@ svg.i{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-widt
     <h3 id="emptyT">No files yet</h3>
     <p id="emptyP"></p>
   </div>
-  <p class="foot desk-only" id="foot" hidden>Closing this window stops PhoneDrop.</p>
+  <p class="foot desk-only" id="foot" hidden>Closing this window stops PhoneDrop.<span id="updFoot" hidden> · <button id="updFootB"></button></span></p>
 </div>
 
 <!-- phone: bottom actions -->
@@ -451,6 +477,7 @@ var IC = {
   play: '<svg class="i" viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z" fill="currentColor" stroke="none"/></svg>',
   folder: '<svg class="i" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   info: '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>',
+  update: '<svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66L20 8.5"/><path d="M20 3.5v5h-5"/></svg>',
   spin: '<svg class="i" viewBox="0 0 24 24" style="animation:sp 1s linear infinite"><path d="M12 3a9 9 0 1 0 9 9"/></svg>'
 };
 var st = document.createElement('style'); st.textContent = '@keyframes sp{to{transform:rotate(360deg)}}'; document.head.appendChild(st);
@@ -531,6 +558,7 @@ fetch('/api/info').then(function(r){ return r.json(); }).then(function(i){
   if (!i.https) linkKind = 'http';
   showLink();
   renderChrome();
+  setUpdate(i.update);
   if (isIOS && !window.isSecureContext && i.https) {
     $('secure').hidden = false;
     $('secureGo').href = i.https;
@@ -581,6 +609,8 @@ try {
     var d = {}; try { d = JSON.parse(e.data); } catch (x) {}
     toast((d.name || 'Phone') + ' saved ' + plural(d.count || 0, d.media ? 'item' : 'file'));
   });
+  es.addEventListener('update', function(e){ try { setUpdate(JSON.parse(e.data)); } catch (x) {} });
+  es.addEventListener('update-progress', function(e){ try { updProgress(JSON.parse(e.data)); } catch (x) {} });
 } catch (e) {}
 setInterval(function(){ if (!document.hidden) load(); }, 15000);
 document.addEventListener('visibilitychange', function(){ if (!document.hidden) load(); });
@@ -1038,6 +1068,96 @@ $('clearBtn').onclick = function(){
   confirmBox('Clear everything?', 'All ' + plural(files.length, 'file') + ' will be removed from the shared folder.', 'Clear all').then(function(ok){
     if (!ok) return; fetch('/api/files', { method: 'DELETE' }).then(function(){ setSelecting(false); load(); });
   });
+};
+
+/* ================= update banner (installed PhoneDrop, on this PC only) ================= */
+// The server checks GitHub for a newer stable release and tells this page (never phones) via /api/info and SSE.
+var upd = null, updGot = 0, updMeter = new Meter(), updPoll = 0;
+var skipUpd = ''; try { skipUpd = localStorage.getItem('pd.skipUpdate') || ''; } catch (e) {}
+function newer(a, b){
+  a = String(a).split('.'); b = String(b).split('.');
+  for (var i = 0; i < 3; i++) { var x = +a[i] || 0, y = +b[i] || 0; if (x !== y) return x > y; }
+  return false;
+}
+// release notes are Markdown: show them as readable text without a Markdown library
+function notesHtml(t){
+  return String(t || '').replace(/<!--[\s\S]*?-->/g, '').split(/\r?\n/).map(function(l){
+    l = l.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/`([^`]+)`/g, '$1').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+    if (/^#{1,6}\s/.test(l)) return '<b>' + l.replace(/^#+\s*/, '') + '</b>';
+    return l.replace(/^\s*[-*]\s+/, '• ');
+  }).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+function setUpdate(u){
+  if (isMobile) return;
+  if (u && u.state === 'downloading' && (!upd || upd.state !== 'downloading')) { updGot = 0; updMeter = new Meter(); }
+  upd = u || null;
+  if (upd && upd.state === 'restarting') waitForRestart();
+  renderUpdate();
+}
+function updProgress(p){
+  if (!upd) return;
+  updGot = p.got || 0; if (p.total) upd.size = p.total;
+  updMeter.tick(updGot);
+  renderUpdate();
+}
+function renderUpdate(){
+  var s = upd ? upd.state || '' : '';
+  var skipped = !!upd && !s && !!skipUpd && !newer(upd.version, skipUpd);
+  $('upd').hidden = isMobile || !upd || skipped;
+  $('updFoot').hidden = !skipped;   // after "Later", a small way back at the bottom of the page
+  if (!upd) return;
+  if (skipped) { $('updFootB').textContent = 'Update to ' + upd.version; return; }
+  var busy = s === 'downloading' || s === 'installing' || s === 'restarting';
+  var icon = busy ? IC.spin : s ? IC.info : IC.update, t, sub = '';
+  if (s === 'downloading') {
+    var total = upd.size || 0, pct = total ? Math.min(100, Math.floor(updGot / total * 100)) : 0;
+    t = 'Downloading update… ' + pct + '%';
+    sub = joinDot(fmt(updGot) + ' of ' + fmt(total), fmtLeft(updMeter.left(total - updGot)));
+    $('updF').style.width = pct + '%';
+  } else if (s === 'installing') { t = 'Installing PhoneDrop ' + upd.version + '…'; sub = 'Click Yes if Windows asks to allow changes. PhoneDrop reopens by itself.'; }
+  else if (s === 'restarting') { t = 'Installing… PhoneDrop will reopen'; sub = 'This takes a few seconds.'; }
+  else if (s === 'cancelled') { t = 'Update cancelled'; sub = 'Windows needs your permission to install it. Click Yes when it asks.'; }
+  else if (s === 'failed') { t = 'Update failed'; sub = 'Something went wrong: ' + (upd.error || 'unknown error') + '.'; }
+  else { t = 'PhoneDrop ' + upd.version + ' is available'; sub = (info ? 'You have ' + info.version + '. ' : '') + 'Updating takes about a minute.'; }
+  var ic = $('updIc'); if (ic._icon !== icon) { ic.innerHTML = icon; ic._icon = icon; }
+  $('updT').textContent = t; $('updS').textContent = sub;
+  $('upd').classList.toggle('err', s === 'failed' || s === 'cancelled');
+  $('updBar').hidden = s !== 'downloading';
+  $('updMan').hidden = s !== 'failed'; $('updMan').href = upd.page || '#';
+  $('updNotes').hidden = !!s || !upd.notes;
+  $('updLater').hidden = busy;
+  $('updGo').hidden = busy; $('updGo').textContent = s ? 'Try again' : 'Update now';
+}
+function startUpdate(){
+  if (!upd) return;
+  upd.state = 'downloading'; upd.error = ''; updGot = 0; updMeter = new Meter(); renderUpdate();
+  fetch('/api/update/install', { method: 'POST' }).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); }).catch(function(){
+    upd.state = 'failed'; upd.error = 'PhoneDrop couldn’t start the download'; renderUpdate();
+  });
+}
+// the installer closes PhoneDrop and starts the new version: reload this window as soon as it's back
+// (only the old copy, just before it quits, still says "restarting")
+function waitForRestart(){
+  if (updPoll) return;
+  updPoll = setInterval(function(){
+    fetch('/api/info', { cache: 'no-store' }).then(function(r){ return r.json(); }).then(function(i){
+      if (!i.update || i.update.state !== 'restarting') location.reload();
+    }, function(){});
+  }, 1500);
+}
+$('updGo').onclick = startUpdate;
+$('updLater').onclick = function(){
+  skipUpd = upd.version; try { localStorage.setItem('pd.skipUpdate', skipUpd); } catch (e) {}
+  renderUpdate(); toast('OK. You can still update from the bottom of the page.');
+};
+$('updFootB').onclick = function(){
+  skipUpd = ''; try { localStorage.removeItem('pd.skipUpdate'); } catch (e) {}
+  renderUpdate(); window.scrollTo({ top: 0, behavior: 'smooth' });
+};
+$('updNotes').onclick = function(){
+  sheet({ title: 'What’s new in ' + upd.version, html: '<div class="notes">' + notesHtml(upd.notes) + '</div>',
+    actions: [{ label: 'Close' }, { label: 'Update now', cls: 'primary' }] }).then(function(i){ if (i === 1) startUpdate(); });
 };
 
 /* ================= uploading (with thumbnails made in the browser) ================= */

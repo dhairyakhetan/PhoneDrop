@@ -80,6 +80,11 @@ Function .onInit
     Abort
   ${EndIf}
   SetRegView 64
+  ; update the copy that's already installed, wherever it is (InstallDirRegKey reads the 32-bit registry, so it misses it)
+  ReadRegStr $0 HKLM "Software\${APP}" "InstallDir"
+  ${If} $0 != ""
+    StrCpy $INSTDIR $0
+  ${EndIf}
 FunctionEnd
 
 Function un.onInit
@@ -89,6 +94,13 @@ FunctionEnd
 ; Start the app as the normal (non-admin) user, so dragging files into its window works.
 Function LaunchApp
   Exec '"$WINDIR\explorer.exe" "$INSTDIR\PhoneDrop.exe"'
+FunctionEnd
+
+; PhoneDrop's in-app updater runs "PhoneDrop-Setup.exe /S" (silent, no pages): open PhoneDrop again afterwards.
+Function .onInstSuccess
+  ${If} ${Silent}
+    Call LaunchApp
+  ${EndIf}
 FunctionEnd
 
 ; ---------- install ----------
@@ -137,7 +149,11 @@ SectionEnd
 
 Section "Desktop shortcut" SecDesktop
   SetShellVarContext all
-  CreateShortcut "$DESKTOP\PhoneDrop.lnk" "$INSTDIR\PhoneDrop.exe" "" "$INSTDIR\PhoneDrop.exe" 0 SW_SHOWNORMAL "" "Send photos and files from this PC to your phone"
+  ; a silent update only refreshes the shortcut, so one you deleted doesn't come back
+  ${IfNot} ${Silent}
+  ${OrIf} ${FileExists} "$DESKTOP\PhoneDrop.lnk"
+    CreateShortcut "$DESKTOP\PhoneDrop.lnk" "$INSTDIR\PhoneDrop.exe" "" "$INSTDIR\PhoneDrop.exe" 0 SW_SHOWNORMAL "" "Send photos and files from this PC to your phone"
+  ${EndIf}
 SectionEnd
 
 Section /o "Start PhoneDrop when I sign in" SecStartup
