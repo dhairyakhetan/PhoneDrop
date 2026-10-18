@@ -9,12 +9,15 @@
     "start": "node server.js",
     "app": "node server.js --app",
     "dev": "node --watch server.js",
-    "build": "node scripts/build.mjs"
+    "build": "node scripts/build.mjs",
+    "test-mode": "node server.js --test",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs"
   },
   "engines": {
     "node": ">=22"
   },
   "devDependencies": {
+    "playwright-core": "1.56.1",
     "postject": "1.0.0-alpha.6",
     "resedit": "2.0.2"
   }

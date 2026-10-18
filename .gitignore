@@ -9,6 +9,7 @@ dist/
 shared/
 .certs/
 error-log.txt
+.test-data/
 
 # OS / editor
 .DS_Store

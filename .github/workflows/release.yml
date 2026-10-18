@@ -7,6 +7,8 @@
 #   3. Write what's new (or click "Generate release notes") -> Publish release
 #   About 3 minutes later PhoneDrop-Setup.exe is on the release, and installed copies of PhoneDrop
 #   show "Update available" (they check at start and every 6 hours).
+#   It also gets PhoneDrop-app-<base>.json.gz: the quick update (just the app files, ~100 KB, no installer).
+#   Installed copies built from the same Node version and installer take that; others get PhoneDrop-Setup.exe.
 #
 # Tick "Set as a pre-release" for a test build: it gets an installer too, but installed copies don't update
 # to it and this link keeps giving the newest stable installer:
@@ -77,16 +79,19 @@ jobs:
 
       - run: npm run build
 
-      - name: Checksum
+      - name: Checksums
         run: |
           test -f dist/PhoneDrop-Setup.exe # build.mjs skips the installer when NSIS is missing
-          sha256sum dist/PhoneDrop-Setup.exe | cut -c1-64 > dist/PhoneDrop-Setup.exe.sha256
-          cat dist/PhoneDrop-Setup.exe.sha256
+          cd dist
+          for f in PhoneDrop-Setup.exe PhoneDrop-app-*.json.gz; do
+            sha256sum "$f" | cut -c1-64 > "$f.sha256"
+            echo "$f $(cat "$f.sha256")"
+          done
 
-      - name: Attach the installer to the release
+      - name: Attach the installer and the quick update to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" dist/PhoneDrop-Setup.exe dist/PhoneDrop-Setup.exe.sha256 --clobber
+        run: gh release upload "$TAG" dist/PhoneDrop-Setup.exe dist/PhoneDrop-Setup.exe.sha256 dist/PhoneDrop-app-*.json.gz dist/PhoneDrop-app-*.json.gz.sha256 --clobber
 
       # The app's "What's new" shows only what's above <!-- install -->, i.e. what you wrote.
       - name: Add install help to the release notes

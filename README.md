@@ -7,7 +7,8 @@ Send photos, videos and files between your Windows PC and your phone over Wi-Fi,
 - No shared Wi-Fi? Turn on your **phone's hotspot** and connect the PC to it. PhoneDrop notices and updates the QR code by itself.
 - The PC tells you which Wi-Fi your phone should join.
 - Works the other way too: send files from your phone, then **Download from phone** on the PC. They count as transferred once they're on the PC.
-- Big videos work too, with progress, speed and time left. Pick photos with long-press + slide like the Photos app.
+- Big videos work too, with progress, speed and time left. A download or upload cut off by a Wi-Fi hiccup or a locked screen carries on by itself where it stopped.
+- Pick photos with long-press + slide like the Photos app.
 - Fits every screen: phones, tablets, small laptop windows and big monitors.
 
 ## Install (Windows)
@@ -18,7 +19,7 @@ Send photos, videos and files between your Windows PC and your phone over Wi-Fi,
 
 PhoneDrop is then in the Start Menu. To remove it: Settings → Apps → Installed apps → PhoneDrop → Uninstall.
 
-**Updates:** PhoneDrop checks for new versions by itself. When it says **PhoneDrop x.y.z is available**, click **Update now**. Windows asks for permission once, and PhoneDrop reopens on the new version a few seconds later.
+**Updates:** PhoneDrop checks for new versions by itself. When it says **PhoneDrop x.y.z is available**, click **Update now**. Most updates are quick: only the changed app (about 100 KB) is downloaded and PhoneDrop restarts on it in a few seconds, without the installer. When an update needs the installer, Windows asks for permission once and PhoneDrop reopens on the new version a few seconds later. If several versions came out, you get the newest straight away.
 
 ## Use it
 
@@ -50,6 +51,8 @@ Open http://localhost:3000. Your phone's links are printed in the terminal.
 | `npm run dev` | restart automatically when `server.js` changes (page edits only need a refresh) |
 | `set KEEP=1 && node server.js` | keep shared files between restarts (Windows cmd) |
 | `set PORT=4000 && node server.js` | use another port |
+| `npm run test-mode` | test mode: pretend phones, networks, slow or broken Wi-Fi and updates, with a debug panel (see `testmode.js`) |
+| `npm install` then `npm test` | the automated tests (needs Edge or Chrome for the page tests) |
 
 ## Build the installer yourself
 
@@ -57,7 +60,7 @@ Open http://localhost:3000. Your phone's links are printed in the terminal.
 2. `npm install`
 3. `npm run build`
 
-This makes `dist/PhoneDrop.exe` (the app, with Node.js built in) and `dist/PhoneDrop-Setup.exe` (the installer).
+This makes `dist/PhoneDrop.exe` (the app, with Node.js built in), `dist/PhoneDrop-Setup.exe` (the installer) and `dist/PhoneDrop-app-….json.gz` (the quick update: just the app files).
 
 ## Releasing a new version
 
@@ -67,18 +70,21 @@ Nothing is built when you push to `main`. To publish a version:
 2. **Choose a tag** → type a new version higher than the last, like `v1.0.1` → **Create new tag on publish**.
 3. Write what's new (or click **Generate release notes**) → **Publish release**.
 
-A few minutes later GitHub Actions attaches `PhoneDrop-Setup.exe` to the release, and installed copies of PhoneDrop offer the update. Tick **Set as a pre-release** for a test build: it gets an installer too, but nobody's PhoneDrop updates to it automatically.
+A few minutes later GitHub Actions attaches `PhoneDrop-Setup.exe` and the quick update to the release, and installed copies of PhoneDrop offer the update. Tick **Set as a pre-release** for a test build: it gets an installer too, but nobody's PhoneDrop updates to it automatically.
 
 ## Project layout
 
 ```
-server.js            backend: web server, file transfer, live updates, HTTPS certificate
+server.js            backend: web server, file transfer, live updates, HTTPS certificate, updates
 public/index.html    frontend: the whole page for both PC and phone
-public/icon.svg      the app icon (the PNGs and assets/PhoneDrop.ico are rendered from it)
+public/icon.svg      the app icon (the PNGs, assets/PhoneDrop.ico and the installer artwork are rendered from it)
+testmode.js          test mode (npm run test-mode)
+test/                automated tests (npm test)
 vendor/qrcode.js     QR code generator (MIT)
 assets/              Windows icon
-installer/           installer wizard script and artwork (NSIS)
-scripts/build.mjs    builds the .exe and the installer
+installer/           installer wizard script and artwork (NSIS), taskbar helper
+scripts/build.mjs    builds the .exe, the installer and the quick update
+scripts/quick-update.js  what goes into a quick update
 .github/workflows/   builds the installer when a release is published
 CLAUDE.md            detailed guide to how everything works
 ```

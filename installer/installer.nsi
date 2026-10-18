@@ -147,6 +147,13 @@ Function .onInstSuccess
 FunctionEnd
 
 ; ---------- install ----------
+; PhoneDrop's window gets its own taskbar button with PhoneDrop's icon, and a pin starts PhoneDrop.exe: the
+; shortcuts carry the same Windows "AppUserModelID" PhoneDrop gives its window (installer\appid.ps1 explains)
+!macro LabelShortcut LNK
+  nsExec::Exec '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\appid.ps1" -Shortcut "${LNK}"'
+  Pop $0
+!macroend
+
 Section "PhoneDrop" SecApp
   SectionIn RO
 
@@ -172,6 +179,9 @@ Section "PhoneDrop" SecApp
 
   SetShellVarContext all
   CreateShortcut "$SMPROGRAMS\PhoneDrop.lnk" "$INSTDIR\PhoneDrop.exe" "" "$INSTDIR\PhoneDrop.exe" 0 SW_SHOWNORMAL "" "Send photos and files from this PC to your phone"
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\appid.ps1" "appid.ps1"
+  !insertmacro LabelShortcut "$SMPROGRAMS\PhoneDrop.lnk"
 
   ; let phones on the Wi-Fi reach PhoneDrop (no firewall pop-up later)
   DetailPrint "Allowing PhoneDrop through Windows Firewall..."
@@ -200,6 +210,7 @@ Section "Desktop shortcut" SecDesktop
   ${IfNot} ${Silent}
   ${OrIf} ${FileExists} "$DESKTOP\PhoneDrop.lnk"
     CreateShortcut "$DESKTOP\PhoneDrop.lnk" "$INSTDIR\PhoneDrop.exe" "" "$INSTDIR\PhoneDrop.exe" 0 SW_SHOWNORMAL "" "Send photos and files from this PC to your phone"
+    !insertmacro LabelShortcut "$DESKTOP\PhoneDrop.lnk"
   ${EndIf}
 SectionEnd
 

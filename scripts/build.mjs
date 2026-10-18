@@ -1,6 +1,7 @@
 // Builds PhoneDrop for Windows from this repo:
 //   dist/PhoneDrop.exe        the app: Node.js + server.js + public/ + vendor/ in one file
 //   dist/PhoneDrop-Setup.exe  the installer wizard (needs NSIS)
+//   dist/PhoneDrop-app-<base>.json.gz   the quick update: just the app files (scripts/quick-update.js)
 //
 // Windows:  install NSIS (https://nsis.sourceforge.io), then:  npm install  &&  npm run build
 // Linux/macOS also work (the Windows node.exe is fetched from npm); point MAKENSIS at a makensis binary.
@@ -10,6 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import * as ResEdit from 'resedit';
 import * as PE from 'pe-library';
 
@@ -20,16 +22,9 @@ const isWin = process.platform === 'win32';
 const run = (cmd, args, opts) => execFileSync(cmd, args, Object.assign({ stdio: 'inherit', shell: isWin && /\.cmd$/i.test(cmd) }, opts));
 fs.mkdirSync(DIST, { recursive: true });
 
-// Files server.js reads through asset(). Keep this list in sync with server.js.
-const ASSETS = [
-  'package.json',
-  'public/index.html',
-  'public/icon.svg',
-  'public/icon.png',
-  'public/favicon.png',
-  'public/apple-touch-icon.png',
-  'vendor/qrcode.js',
-];
+// the files server.js reads through asset() are listed in scripts/quick-update.js
+const quick = createRequire(import.meta.url)('./quick-update.js');
+const ASSETS = quick.ASSETS;
 
 // 1. The Windows node.exe to build on: the running one on Windows, or the same version from npm elsewhere.
 let baseExe = process.execPath;
@@ -43,6 +38,10 @@ if (!isWin) {
   }
 }
 console.log('> PhoneDrop ' + VERSION + ', building on ' + baseExe);
+// what this exe can take quick updates for (server.js reads it as build-info.json)
+const BASE = quick.base(ROOT, process.versions.node);
+const buildInfo = path.join(DIST, 'build-info.json');
+fs.writeFileSync(buildInfo, JSON.stringify({ version: VERSION, base: BASE, node: process.versions.node }));
 
 // 2. Pack server.js + assets into a blob Node can run by itself ("single executable application").
 const seaConfig = path.join(DIST, 'sea-config.json'), blob = path.join(DIST, 'sea-prep.blob');
@@ -52,7 +51,7 @@ fs.writeFileSync(seaConfig, JSON.stringify({
   disableExperimentalSEAWarning: true,
   useCodeCache: false, // must stay false when building on a different OS than the target
   useSnapshot: false,
-  assets: Object.fromEntries(ASSETS.map((a) => [a, path.join(ROOT, a)])),
+  assets: Object.assign(Object.fromEntries(ASSETS.map((a) => [a, path.join(ROOT, a)])), { 'build-info.json': buildInfo }),
 }));
 run(process.execPath, ['--experimental-sea-config', seaConfig]);
 
@@ -87,7 +86,14 @@ buf.writeUInt16LE(2, pe + 4 + 20 + 68); // IMAGE_SUBSYSTEM_WINDOWS_GUI
 fs.writeFileSync(exePath, buf);
 fs.rmSync(blob, { force: true });
 fs.rmSync(seaConfig, { force: true });
+fs.rmSync(buildInfo, { force: true });
 console.log('> built dist/PhoneDrop.exe (' + (buf.length / 1048576).toFixed(1) + ' MB)');
+
+// 5b. The quick update for exes with this same base (older ones from another base get the installer).
+for (const f of fs.readdirSync(DIST)) if (/^PhoneDrop-app-.*\.json\.gz$/.test(f)) fs.rmSync(path.join(DIST, f));
+const app = path.join(DIST, 'PhoneDrop-app-' + BASE + '.json.gz');
+fs.writeFileSync(app, quick.make(ROOT, { version: VERSION, base: BASE }));
+console.log('> built ' + path.relative(ROOT, app) + ' (' + Math.round(fs.statSync(app).size / 1024) + ' KB, quick update)');
 
 // 6. The installer wizard.
 const makensis = process.env.MAKENSIS || (isWin

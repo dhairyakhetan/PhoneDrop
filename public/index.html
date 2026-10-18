@@ -8,10 +8,12 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>PhoneDrop</title>
+<!-- icon.svg everywhere (tab, app window, taskbar); icon.png only for browsers without SVG icons; iPhone's home
+     screen needs a square PNG -->
 <link rel="icon" type="image/svg+xml" sizes="any" href="/icon.svg">
-<link rel="icon" type="image/png" sizes="256x256" href="/icon.png">
-<link rel="icon" type="image/png" sizes="32x32" href="/favicon.png">
+<link rel="icon" type="image/png" sizes="512x512" href="/icon.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
 <meta name="apple-mobile-web-app-title" content="PhoneDrop">
 <style>
 :root{
@@ -72,8 +74,7 @@ button:focus-visible,a:focus-visible,label:focus-visible{outline:2px solid var(-
   border-bottom:1px solid var(--line);padding-top:var(--sat)}
 .bar-in{max-width:1240px;margin:0 auto;height:58px;display:flex;align-items:center;gap:12px;padding:0 20px}
 .brand{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
-.logo{width:32px;height:32px;border-radius:9px;background:var(--acc);color:#fff;display:grid;place-items:center;flex:none}
-.logo svg.i{width:18px;height:18px;stroke-width:2.4}
+.logo{width:34px;height:34px;flex:none;display:block}
 .brand-t{min-width:0}
 .brand-t b{display:block;font-size:16px;letter-spacing:-.01em}
 .brand-t span{display:block;font-size:12px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -427,6 +428,20 @@ button:focus-visible,a:focus-visible,label:focus-visible{outline:2px solid var(-
   .mobile .lb-nav{display:grid}
   .dock-in{max-width:520px}
 }
+/* test mode (node server.js --test): TEST badge + debug panel */
+.tbadge{position:fixed;left:12px;bottom:calc(12px + var(--sab));z-index:130;height:28px;padding:0 12px;border-radius:999px;background:#f5a524;color:#1b1300;
+  font-weight:800;font-size:12px;letter-spacing:.08em;box-shadow:var(--shadow)}
+.mobile .tbadge{bottom:calc(100px + var(--sab))}
+.tpanel{position:fixed;left:12px;bottom:calc(48px + var(--sab));z-index:130;width:min(380px,calc(100vw - 24px));max-height:calc(100vh - 70px);overflow:auto;
+  padding:14px;border-radius:14px;background:var(--surface);border:1px solid var(--line2);box-shadow:var(--shadow);font-size:13px}
+.mobile .tpanel{bottom:calc(136px + var(--sab));max-height:calc(100vh - 160px)}
+.tpanel h4{margin:14px 0 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}
+.tpanel h4:first-child{margin-top:0}
+.tpanel .trow{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.tpanel select,.tpanel input{height:32px;border-radius:8px;border:1px solid var(--line2);background:var(--surface2);color:var(--text);padding:0 8px;font:inherit}
+.tpanel input[type=text]{width:76px}
+.tpanel label{display:inline-flex;align-items:center;gap:6px;color:var(--mute)}
+.tpanel pre{margin:0;white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;color:var(--mute)}
 [hidden],.mobile [hidden]{display:none!important}
 </style>
 </head>
@@ -434,7 +449,7 @@ button:focus-visible,a:focus-visible,label:focus-visible{outline:2px solid var(-
 
 <header class="bar"><div class="bar-in">
   <div class="brand">
-    <div class="logo"><svg class="i" viewBox="0 0 24 24"><path d="M12 4v13M6.5 11.5 12 17l5.5-5.5"/><path d="M5 20h14"/></svg></div>
+    <img class="logo" src="/icon.svg" alt="">
     <div class="brand-t"><b>PhoneDrop</b><span id="sub"><i class="live off" id="live"></i>Connecting…</span></div>
   </div>
   <button class="btn sm tint" id="selBtn" hidden>Select</button>
@@ -512,7 +527,7 @@ button:focus-visible,a:focus-visible,label:focus-visible{outline:2px solid var(-
     <h3 id="emptyT">No files yet</h3>
     <p id="emptyP"></p>
   </div>
-  <p class="foot desk-only" id="foot" hidden>Closing this window stops PhoneDrop.<span id="updFoot" hidden> · <button id="updFootB"></button></span></p>
+  <p class="foot desk-only" id="foot" hidden><span id="footApp" hidden>Closing this window stops PhoneDrop.</span><span id="updFoot" hidden><span id="footSep"> · </span><button id="updFootB"></button></span></p>
 </div>
 
 <!-- phone: bottom actions -->
@@ -582,6 +597,18 @@ var isAndroid = /Android/i.test(UA);
 var isMobile = isIOS || isAndroid || /Mobi/i.test(UA);
 var isSafari = /Safari/.test(UA) && !/Chrome|Chromium|CriOS|Edg|Firefox|FxiOS/.test(UA);
 var canShowHeic = isIOS || isSafari;
+// test mode on a computer pretending to be an iPhone: a pretend share sheet (desktop browsers can't share files)
+if (window.PD_TEST && isIOS && !navigator.canShare) try {
+  navigator.canShare = function(){ return true; };
+  navigator.share = function(d){
+    var n = d.files.length, size = 0, media = d.files.every(function(f){ return /^(image|video)\//.test(f.type); });
+    d.files.forEach(function(f){ size += f.size; });
+    return sheet({ title: 'iPhone share sheet (test mode)', text: plural(n, 'file') + ', ' + fmt(size) + ', all downloaded. A real iPhone would offer “Save ' + (media ? n + (n === 1 ? ' Image' : ' Images') : 'to Files') + '” here.',
+      actions: [{ label: 'Cancel' }, { label: media ? 'Save ' + n + (n === 1 ? ' Image' : ' Images') : 'Save to Files', cls: 'primary' }] }).then(function(i){
+      if (i !== 1) { var e = new Error('cancelled'); e.name = 'AbortError'; throw e; }
+    });
+  };
+} catch (e) {}
 var canShareFiles = false;
 try { canShareFiles = window.isSecureContext && !!navigator.canShare && navigator.canShare({ files: [new File(['x'], 'x.jpg', { type: 'image/jpeg' })] }); } catch (e) {}
 var useShare = isIOS && canShareFiles;      // iPhone on the secure link -> share sheet -> "Save N Images"
@@ -741,7 +768,7 @@ fetch('/api/info').then(function(r){ return r.json(); }).then(function(i){
   var port = function(u){ return u ? u.split(':').pop() : ''; };
   // Android doesn't need the secure link (it only matters for iPhone's Save to Photos), so skip its warning
   if (isAndroid && location.protocol === 'https:') { location.replace('http://' + location.hostname + ':' + port(i.http) + location.pathname + location.search); return; }
-  $('foot').hidden = !i.app;
+  renderFoot();
   showLink();
   renderChrome();
   setUpdate(i.update);
@@ -802,7 +829,7 @@ function load(){
 }
 try {
   var es = new EventSource('/api/events?id=' + enc(myId) + '&name=' + enc(myName));
-  es.onmessage = load; es.onopen = function(){ setLive(true); load(); }; es.onerror = function(){ setLive(false); };
+  es.onmessage = load; es.onopen = function(){ setLive(true); load(); dlWake(); }; es.onerror = function(){ setLive(false); };
   var firstDevices = true;
   es.addEventListener('devices', function(e){
     var list = []; try { list = JSON.parse(e.data); } catch (x) {}
@@ -1079,12 +1106,12 @@ function throttle(fn, ms){ var t = 0, q = false; return function(){ if (q) retur
 /* ================= saving on the phone ================= */
 // Small batches are downloaded in the background so one tap opens the share sheet straight away.
 // Big ones (long videos) only download when you ask, with a progress bar, so nothing huge downloads by surprise.
-var AUTO_BYTES = BATCH_BYTES, HUGE_BYTES = 1536 * 1048576;
-var cache = new Map(), inflight = new Map(), failed = new Set(), pfQueue = [], pfActive = 0, wantKeys = new Set();
-var manualKey = '', batchKeyNow = '', dockMeter = new Meter();
+var AUTO_BYTES = BATCH_BYTES, HUGE_BYTES = 1536 * 1048576, KEEP_BYTES = 300 * 1048576;
+var wantList = [], wantKeys = new Set(), manualKey = '', batchKeyNow = '', dockMeter = new Meter();
 function targets(){
   if (selecting) return files.filter(function(f){ return sel.has(f.name); });
-  return files.filter(function(f){ return isMedia(f) && !saved[key(f)] && !ownFile(f); });
+  // oldest first: files the computer adds while a batch downloads join at the end instead of pushing one out of it
+  return files.filter(function(f){ return isMedia(f) && !saved[key(f)] && !ownFile(f); }).reverse();
 }
 function nextBatch(list){
   var media = list.filter(isMedia), other = list.filter(function(f){ return !isMedia(f); });
@@ -1095,51 +1122,125 @@ function nextBatch(list){
   }
   return { list: out, group: src, media: !!media.length, bytes: bytes };
 }
-// download one file into memory (as a Blob the share sheet can use), with progress
-function fetchFile(f){
-  var k = key(f);
-  if (cache.has(k)) return Promise.resolve(cache.get(k));
-  var ent = inflight.get(k);
-  if (ent) return ent.promise;
-  var x = new XMLHttpRequest();
-  ent = { xhr: x, loaded: 0 };
-  ent.promise = new Promise(function(res, rej){
-    x.open('GET', fileUrl(f)); x.responseType = 'blob';
-    x.onprogress = function(e){ ent.loaded = e.loaded; onDlProgress(); };
-    x.onload = function(){
-      inflight.delete(k);
-      if (x.status >= 200 && x.status < 300 && x.response) {
-        var file = new File([x.response], f.name, { type: f.type, lastModified: f.mtime });
-        cache.set(k, file); failed.delete(k); res(file);
-      } else { failed.add(k); rej(new Error('HTTP ' + x.status)); }
+// Downloads into memory (as Files the share sheet / Downloads can use) that keep every byte they got: one that's
+// paused (the batch changed, the viewer opened) or cut off (Wi-Fi dropped, screen locked) carries on from where it
+// stopped with a Range request instead of starting over. A cut-off one is retried by itself, straight away while
+// it was making progress; after 6 tries in a row without a single byte the button says "Download didn’t finish".
+var dls = new Map();   // key(f) -> { f, k, parts, chunk, chunkBytes, got, etag, file, ctl, timer, tries, failed, waiters, used }
+var RETRY = window.PD_RETRY || [500, 1000, 2000, 4000, 8000, 15000];   // (the automated tests use shorter waits)
+function dlFor(f){
+  var k = key(f), d = dls.get(k);
+  if (!d) { d = { f: f, k: k, parts: [], chunk: [], chunkBytes: 0, got: 0, etag: '', file: null, ctl: null, timer: 0, tries: 0, failed: false, waiters: [], used: 0 }; dls.set(k, d); }
+  d.used = Date.now();
+  return d;
+}
+function readyFile(f){ var d = dls.get(key(f)); return d ? d.file : null; }
+function dlFailed(f){ var d = dls.get(key(f)); return !!(d && d.failed); }
+function dlRetrying(f){ var d = dls.get(key(f)); return !!(d && d.timer && d.tries); }
+function loadedBytes(f){ var d = dls.get(key(f)); return !d ? 0 : d.file ? f.size : d.got; }
+function dlAdd(d, part){
+  var n = part.byteLength !== undefined ? part.byteLength : part.size;
+  d.chunk.push(part); d.chunkBytes += n; d.got += n;
+  if (d.chunkBytes >= 4194304) { d.parts.push(new Blob(d.chunk)); d.chunk = []; d.chunkBytes = 0; }   // let the browser hold big ones
+}
+function dlReset(d){ d.parts = []; d.chunk = []; d.chunkBytes = 0; d.got = 0; d.etag = ''; }
+function dlStop(d){ clearTimeout(d.timer); d.timer = 0; if (d.ctl) { var c = d.ctl; d.ctl = null; c.abort(); } }
+function dlDrop(k){
+  var d = dls.get(k); if (!d) return;
+  dlStop(d); dls.delete(k);
+  d.waiters.forEach(function(w){ w[1](new Error('dropped')); });
+}
+function dlSettle(d, file, err){ d.waiters.forEach(function(w){ if (file) w[0](file); else w[1](err); }); d.waiters = []; }
+function dlRun(d){
+  var f = d.f, ac = window.AbortController ? new AbortController() : null, h = {};
+  var ctl = { abort: function(){ if (ac) ac.abort(); } }, before = d.got;
+  var mine = function(){ return d.ctl === ctl; };   // false once paused: anything still arriving is ignored
+  if (d.got) { h.Range = 'bytes=' + d.got + '-'; if (d.etag) h['If-Range'] = d.etag; }
+  d.ctl = ctl;
+  fetch(fileUrl(f), { headers: h, signal: ac ? ac.signal : undefined }).then(function(r){
+    if (!mine()) return;
+    if (r.status === 200 && d.got) dlReset(d);   // the file changed on the computer: start from the beginning
+    else if (!r.ok) { var e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
+    d.etag = r.headers.get('ETag') || d.etag;
+    if (!r.body || !r.body.getReader) return r.blob().then(function(b){ if (mine()) dlAdd(d, b); });   // older browsers: in one go
+    var rd = r.body.getReader();
+    var next = function(){
+      return rd.read().then(function(x){
+        if (!mine()) { rd.cancel().catch(function(){}); return; }
+        if (x.done) return;
+        dlAdd(d, x.value); onDlProgress();
+        return next();
+      });
     };
-    x.onerror = function(){ inflight.delete(k); failed.add(k); rej(new Error('network')); };
-    x.onabort = function(){ inflight.delete(k); rej(new Error('aborted')); };
-    x.send();
+    return next();
+  }).then(function(){
+    if (!mine()) return;
+    if (d.got !== f.size) throw new Error('incomplete');   // the connection ended early
+    d.ctl = null; d.tries = 0;
+    if (d.chunk.length) d.parts.push(new Blob(d.chunk));
+    d.file = new File(d.parts, f.name, { type: f.type, lastModified: f.mtime });
+    d.parts = []; d.chunk = []; d.chunkBytes = 0;
+    dlSettle(d, d.file);
+    dlAfter();
+  }).catch(function(e){
+    if (!mine()) return;   // paused on purpose
+    d.ctl = null;
+    if (d.got > f.size || (e && e.status === 416)) dlReset(d);
+    var moved = d.got > before;
+    if (moved) d.tries = 0; else if (!document.hidden) d.tries++;   // a locked phone doesn't count against it
+    if ((e && e.status === 404) || d.tries >= RETRY.length) { d.failed = true; dlSettle(d, null, e); }
+    else d.timer = setTimeout(function(){ d.timer = 0; dlPump(); }, moved ? 200 : document.hidden ? 5000 : RETRY[d.tries]);
+    dlAfter();
   });
-  ent.promise.catch(function(){});
-  inflight.set(k, ent);
-  return ent.promise;
 }
-function loadedBytes(f){ var k = key(f); if (cache.has(k)) return f.size; var e = inflight.get(k); return e ? e.loaded : 0; }
-function abortUnwanted(){ inflight.forEach(function(e, k){ if (!wantKeys.has(k) && k !== lbKey) e.xhr.abort(); }); }
-function prefetch(batch){
-  wantKeys = new Set(batch.map(key));
-  cache.forEach(function(v, k){ if (!wantKeys.has(k) && k !== lbKey) cache.delete(k); });
-  abortUnwanted();
-  pfQueue = pfQueue.filter(function(f){ return wantKeys.has(key(f)); });
-  batch.forEach(function(f){ var k = key(f); if (!cache.has(k) && !inflight.has(k) && !failed.has(k) && pfQueue.indexOf(f) < 0) pfQueue.push(f); });
-  pfPump();
-}
-// while you look at one photo in the viewer it gets the whole Wi-Fi: background downloads wait (unless you asked for them)
+// what runs: the photo open in the viewer first, then the batch (3 at a time). Everything else is paused.
+// While you look at one photo it gets the whole Wi-Fi: the batch waits, unless you started it yourself.
 function pfPaused(){ return !$('lb').hidden && manualKey !== batchKeyNow; }
-function pfPump(){
-  while (pfActive < 3 && pfQueue.length && !pfPaused()) {
-    var f = pfQueue.shift(); pfActive++;
-    fetchFile(f).catch(function(){}).then(function(){ pfActive--; renderDock(); pfPump(); });
-  }
+function dlPump(){
+  var run = [], n = 0;
+  if (lbKey && lbWant && dls.has(lbKey)) run.push(lbKey);
+  if (!pfPaused()) wantList.forEach(function(k){ if (k !== lbKey) run.push(k); });
+  dls.forEach(function(d, k){
+    if (d.ctl && run.indexOf(k) < 0 && d.f.size - d.got < 1048576 && wantKeys.has(k)) run.push(k);   // almost done: cheaper to finish
+    if ((d.ctl || d.timer) && run.indexOf(k) < 0) dlStop(d); else if (d.ctl) n++;
+  });
+  run.forEach(function(k, i){
+    var d = dls.get(k);
+    if (d && !d.file && !d.ctl && !d.timer && !d.failed && (n < 3 || (i === 0 && k === lbKey))) { dlRun(d); n++; }
+  });
 }
+// the batch to keep (`run`: and to download now). Other downloads keep what they got, up to 300 MB in all (the
+// most recently used), in case you come back to them; files no longer on the computer are dropped.
+function prefetch(batch, run){
+  wantKeys = new Set(batch.map(key));
+  wantList = run === false ? [] : batch.map(function(f){ return dlFor(f).k; });
+  var live = {}, spare = [], kept = 0;
+  files.forEach(function(f){ live[key(f)] = 1; });
+  dls.forEach(function(d, k){ if (!live[k]) dlDrop(k); else if (!wantKeys.has(k) && k !== lbKey) spare.push(d); });
+  spare.sort(function(a, b){ return b.used - a.used; });
+  spare.forEach(function(d){ kept += loadedBytes(d.f); if (kept > KEEP_BYTES) dlDrop(d.k); });
+  dlPump();
+}
+function fetchFile(f){
+  var d = dlFor(f);
+  if (d.file) return Promise.resolve(d.file);
+  if (d.failed) { d.failed = false; d.tries = 0; }
+  var p = new Promise(function(res, rej){ d.waiters.push([res, rej]); });
+  dlPump();
+  return p;
+}
+function dlAfter(){ dlPump(); if (isMobile) renderDock(); renderLbSave(); }
 var onDlProgress = throttle(function(){ if (isMobile) renderDock(); renderLbSave(); }, 200);
+// back on the page, back online or the computer is back: carry on now instead of waiting for the next retry
+function dlWake(){
+  dls.forEach(function(d){
+    if (d.timer) { clearTimeout(d.timer); d.timer = 0; }
+    if (d.failed && (wantKeys.has(d.k) || d.k === lbKey)) { d.failed = false; d.tries = 0; }
+  });
+  dlPump(); if (isMobile) renderDock();
+}
+window.addEventListener('online', dlWake);
+document.addEventListener('visibilitychange', function(){ if (!document.hidden) dlWake(); });
 
 var dockMode = '';
 function setDock(o){
@@ -1168,8 +1269,8 @@ function renderDock(){
   var list = targets();
   if (isIOS && !canShareFiles && info && info.https) return setDock({ mode: 'secure', icon: IC.lock, t1: 'Enable Save to Photos', t2: 'Opens the secure link' });
   if (!list.length) {
-    wantKeys = new Set(); abortUnwanted();
-    if (selecting) return setDock({ mode: 'none', icon: IC.photos, t1: 'Select items to save', disabled: true });
+    if (selecting) return setDock({ mode: 'none', icon: IC.photos, t1: 'Select items to save', disabled: true });   // the batch carries on until you pick
+    prefetch([], false);
     if (!others.some(isMedia)) return setDock({ mode: 'selectfiles', icon: IC.folder, t1: 'Select files to save' });
     return setDock({ mode: 'again', icon: IC.check, t1: 'All saved', t2: 'Tap for options', done: true });
   }
@@ -1182,21 +1283,21 @@ function renderDock(){
   var big = nb.bytes > AUTO_BYTES, manual = manualKey === bk;
   var multi = total > b.length;
 
-  if (b.some(function(f){ return failed.has(key(f)); }))
+  if (b.some(dlFailed))
     return setDock({ mode: 'retry', icon: IC.down, t1: 'Download didn’t finish', t2: 'Tap to try again' });
-  if (big && !manual && !b.every(function(f){ return cache.has(key(f)); })) {
-    wantKeys = new Set(b.map(key)); abortUnwanted();
+  if (big && !manual && !b.every(readyFile)) {
+    prefetch(b, false);   // keeps what it got, downloads nothing until you tap
     return setDock({ mode: 'big', icon: nb.media ? IC.photos : IC.folder, t1: 'Save ' + noun(b) + ' ' + where,
       t2: joinDot(fmt(nb.bytes), multi ? total + ' ' + noun(nb.group) + ' to go' : 'downloads to your phone first') });
   }
   prefetch(b);
   var got = 0; b.forEach(function(f){ got += loadedBytes(f); });
-  if (got < nb.bytes || b.some(function(f){ return !cache.has(key(f)); })) {
+  if (got < nb.bytes || !b.every(readyFile)) {
     dockMeter.tick(got);
-    var pct = nb.bytes ? Math.floor(got / nb.bytes * 100) : 0;
-    var what = b.length === 1 ? (kind(b[0]) === 'video' ? 'Downloading video' : 'Getting it ready') : 'Getting ' + b.length + ' ' + noun(b) + ' ready';
+    var pct = nb.bytes ? Math.floor(got / nb.bytes * 100) : 0, re = b.some(dlRetrying);
+    var what = re ? 'Reconnecting' : b.length === 1 ? (kind(b[0]) === 'video' ? 'Downloading video' : 'Getting it ready') : 'Getting ' + b.length + ' ' + noun(b) + ' ready';
     return setDock({ mode: 'prep', icon: IC.spin, t1: what + '… ' + pct + '%', cancel: manual,
-      t2: joinDot(fmt(got) + ' of ' + fmt(nb.bytes), fmtLeft(dockMeter.left(nb.bytes - got))), fill: pct });
+      t2: joinDot(fmt(got) + ' of ' + fmt(nb.bytes), re ? 'carries on where it stopped' : fmtLeft(dockMeter.left(nb.bytes - got))), fill: pct });
   }
   var t1 = multi ? 'Save ' + b.length + ' ' + where : selecting ? 'Save ' + b.length + ' ' + noun(b) + ' ' + where : 'Save all ' + b.length + ' ' + where;
   if (b.length === 1 && !multi) t1 = 'Save ' + noun(b) + ' ' + where;
@@ -1206,7 +1307,7 @@ function renderDock(){
 
 function markSaved(list){
   list.forEach(function(f){
-    saved[key(f)] = 1; cache.delete(key(f));
+    saved[key(f)] = 1; dlDrop(key(f));
     setSel(f.name, false);
     nodes[f.name] && nodes[f.name].classList.add('saved');
   });
@@ -1254,7 +1355,7 @@ $('save').onclick = function(){
     return;
   }
   var nb = nextBatch(targets()), b = nb.list;
-  if (dockMode === 'retry') { b.forEach(function(f){ failed.delete(key(f)); }); manualKey = batchKeyNow; renderDock(); return; }
+  if (dockMode === 'retry') { b.forEach(function(f){ var d = dls.get(key(f)); if (d) { d.failed = false; d.tries = 0; } }); manualKey = batchKeyNow; renderDock(); return; }
   if (dockMode === 'big') {
     if (nb.bytes > HUGE_BYTES) {
       sheet({ title: 'This is a big one (' + fmt(nb.bytes) + ')', text: useShare
@@ -1270,7 +1371,7 @@ $('save').onclick = function(){
   }
   if (dockMode === 'prep') { toast('Still downloading — the button will say Save when it’s ready'); return; }
   if (dockMode !== 'share') return;
-  var fl = b.map(function(f){ return cache.get(key(f)); });
+  var fl = b.map(readyFile);
   if (fl.some(function(x){ return !x; })) { renderDock(); return; }
   var done = function(){
     markSaved(b); manualKey = '';
@@ -1287,7 +1388,7 @@ $('save').onclick = function(){
   });
 };
 $('cancelBtn').onclick = function(){
-  manualKey = ''; wantKeys = new Set(); abortUnwanted(); pfQueue = [];
+  manualKey = ''; nextBatch(targets()).list.forEach(function(f){ dlDrop(key(f)); });   // big ones: free the memory too
   toast('Download cancelled'); renderDock();
 };
 $('delBtn').onclick = function(){ deleteNames(Array.from(sel)); };
@@ -1350,6 +1451,7 @@ function renderUpdate(){
   var skipped = !!upd && !s && !!skipUpd && !newer(upd.version, skipUpd);
   $('upd').hidden = isMobile || !upd || skipped;
   $('updFoot').hidden = !skipped;   // after "Later", a small way back at the bottom of the page
+  renderFoot();
   if (!upd) return;
   if (skipped) { $('updFootB').textContent = 'Update to ' + upd.version; return; }
   var busy = s === 'downloading' || s === 'installing' || s === 'restarting';
@@ -1360,10 +1462,11 @@ function renderUpdate(){
     sub = joinDot(fmt(updGot) + ' of ' + fmt(total), fmtLeft(updMeter.left(total - updGot)));
     $('updF').style.width = pct + '%';
   } else if (s === 'installing') { t = 'Installing PhoneDrop ' + upd.version + '…'; sub = 'Click Yes if Windows asks to allow changes. PhoneDrop reopens by itself.'; }
-  else if (s === 'restarting') { t = 'Installing… PhoneDrop will reopen'; sub = 'This takes a few seconds.'; }
+  else if (s === 'restarting') { t = upd.quick ? 'Restarting into PhoneDrop ' + upd.version + '…' : 'Installing… PhoneDrop will reopen'; sub = 'This takes a few seconds.'; }
   else if (s === 'cancelled') { t = 'Update cancelled'; sub = 'Windows needs your permission to install it. Click Yes when it asks.'; }
   else if (s === 'failed') { t = 'Update failed'; sub = 'Something went wrong: ' + (upd.error || 'unknown error') + '.'; }
-  else { t = 'PhoneDrop ' + upd.version + ' is available'; sub = (info ? 'You have ' + info.version + '. ' : '') + 'Updating takes about a minute.'; }
+  else { t = 'PhoneDrop ' + upd.version + ' is available'; sub = (info ? 'You have ' + info.version + '. ' : '') +
+    (upd.quick ? 'Quick update (' + fmt(upd.size || 0) + '): takes a few seconds, no installer.' : 'Updating takes about a minute.'); }
   if (updStuck && busy) { icon = IC.info; t = 'PhoneDrop didn’t reopen by itself'; sub = 'Open PhoneDrop from the Start Menu to finish. You can close this window.'; }
   var ic = $('updIc'); if (ic._icon !== icon) { ic.innerHTML = icon; ic._icon = icon; }
   $('updT').textContent = t; $('updS').textContent = sub;
@@ -1373,6 +1476,10 @@ function renderUpdate(){
   $('updNotes').hidden = !!s || !upd.notes;
   $('updLater').hidden = busy;
   $('updGo').hidden = busy; $('updGo').textContent = s ? 'Try again' : 'Update now';
+}
+function renderFoot(){
+  var app = !!(info && info.app), back = !$('updFoot').hidden;
+  $('foot').hidden = !app && !back; $('footApp').hidden = !app; $('footSep').hidden = !app;
 }
 function startUpdate(){
   if (!upd) return;
@@ -1496,9 +1603,22 @@ function upOne(file){
   // (the server keeps the file hidden for up to 5 s until it arrives, so the tile appears once, fully drawn)
   var media = /^(image|video)\//.test(file.type) || /\.(heic|heif|mov|mp4|m4v|webm)$/i.test(file.name);
   var thumb = media ? makeThumb(file).then(function(th){ if (th && th.blob && t.parentNode) setPendingPreview(t, th.blob); return th; }) : null;
-  xhrUpload('/upload?name=' + enc(file.name) + (media ? '&thumb=1' : '') + '&from=' + enc(myId) + '&fromName=' + enc(myName), file,
-    function(n){ U.live[id] = n; setPendingProgress(t, file.size ? n / file.size : 1, big); upRenderT(); },
-    function(x){ U.xhrs[id] = x; })
+  // the connection dropped (Wi-Fi blip, phone locked): send it again by itself, up to 3 more times. The server
+  // throws away a half-received file, so a retry never leaves a broken copy behind.
+  var attempt = function(n){
+    return xhrUpload('/upload?name=' + enc(file.name) + (media ? '&thumb=1' : '') + '&uid=' + id + '&from=' + enc(myId) + '&fromName=' + enc(myName), file,
+      function(b){ U.live[id] = b; setPendingProgress(t, file.size ? b / file.size : 1, big); upRenderT(); },
+      function(x){ U.xhrs[id] = x; })
+      .catch(function(err){
+        if (!err || err.message !== 'network' || n >= 3 || U.cancelled) throw err;
+        U.live[id] = 0; setPendingProgress(t, 0, big); upRenderT();
+        return new Promise(function(ok){ setTimeout(ok, [1000, 3000, 6000][n]); }).then(function(){
+          if (U.cancelled) throw new Error('cancelled');
+          return attempt(n + 1);
+        });
+      });
+  };
+  attempt(0)
     .then(function(r){
       t._final = r.name; t.classList.add('done');
       if (thumb) return thumb.then(function(th){
@@ -1568,20 +1688,19 @@ function openLb(name){
   if (lbIdx < 0) return;
   $('lb').hidden = false; document.body.style.overflow = 'hidden';
   try { history.pushState({ lb: 1 }, ''); } catch (e) {}
-  if (pfPaused()) { var k0 = key(lbList[lbIdx]); inflight.forEach(function(e, k){ if (k !== k0) e.xhr.abort(); }); }
   showLb();
 }
+// the photo you leave keeps what it downloaded (it's paused, not thrown away), so going back to it is instant
 function lbRelease(){
-  var k = lbKey; lbKey = ''; lbFile = null; lbWant = false;
+  lbKey = ''; lbFile = null; lbWant = false;
   if (lbUrl) { URL.revokeObjectURL(lbUrl); lbUrl = ''; }
-  if (k && !wantKeys.has(k)) { var e = inflight.get(k); if (e) e.xhr.abort(); cache.delete(k); }
 }
 function closeLb(fromPop){
   if ($('lb').hidden) return;
   $('lb').hidden = true; document.body.style.overflow = '';
   $('lbStage').textContent = ''; $('lbLoad').hidden = true;
   lbRelease();
-  if (isMobile) renderDock();   // background downloads carry on
+  if (isMobile) renderDock(); else dlPump();   // background downloads carry on
   if (!fromPop && history.state && history.state.lb) history.back();
 }
 window.addEventListener('popstate', function(){ closeLb(true); });
@@ -1631,9 +1750,10 @@ function showLb(){
   $('lbP').style.opacity = lbIdx <= 0 ? .3 : 1; $('lbN').style.opacity = lbIdx >= lbList.length - 1 ? .3 : 1;
   if (usePrefetch) {
     $('lbSave').hidden = false; $('lbDl').hidden = true;
-    lbWant = f.size <= AUTO_BYTES || cache.has(lbKey) || inflight.has(lbKey);
+    lbWant = f.size <= AUTO_BYTES || loadedBytes(f) > 0;
     if (lbWant && !viaBlob) lbStart(f);
   } else { $('lbSave').hidden = true; $('lbDl').hidden = false; }
+  dlPump();   // pauses the batch while you look (unless you started it)
   renderLbSave();
 }
 function lbStart(f, then){
@@ -1643,10 +1763,11 @@ function lbStart(f, then){
 }
 function renderLbSave(){
   var f = lbList[lbIdx], sb = $('lbSave'); if (!f || !usePrefetch || $('lb').hidden) return;
-  var label = !useShare ? 'Save to phone' : isMedia(f) ? 'Save to Photos' : 'Save to Files', icon = !useShare ? IC.down : isMedia(f) ? IC.photos : IC.folder, k = key(f);
+  var label = !useShare ? 'Save to phone' : isMedia(f) ? 'Save to Photos' : 'Save to Files', icon = !useShare ? IC.down : isMedia(f) ? IC.photos : IC.folder;
   var fill = 0, html, dis = false;
-  if (lbFile || cache.has(k)) { lbFile = cache.get(k) || lbFile; html = icon + label; }
-  else if (failed.has(k)) html = 'Download failed · tap to retry';
+  if (lbFile || readyFile(f)) { lbFile = readyFile(f) || lbFile; html = icon + label; }
+  else if (dlFailed(f)) html = 'Download failed · tap to retry';
+  else if (dlRetrying(f)) html = IC.spin + 'Reconnecting…';
   else if (!lbWant) html = icon + label + ' · ' + fmt(f.size);
   else {
     var got = loadedBytes(f); lbMeter.tick(got);
@@ -1664,13 +1785,12 @@ $('lbN').onclick = function(){ lbGo(1); };
 $('lbDl').onclick = function(){ var f = lbList[lbIdx]; if (f) { downloadOne(f); if (isMobile) { markSaved([f]); } } };
 $('lbSave').onclick = function(){
   var f = lbList[lbIdx]; if (!f) return;
-  var k = key(f);
-  if (failed.has(k)) { failed.delete(k); lbStart(f); renderLbSave(); return; }
-  if (!lbFile && !cache.has(k)) {
+  if (dlFailed(f)) { lbStart(f); renderLbSave(); return; }
+  if (!lbFile && !readyFile(f)) {
     if (!lbWant) { lbStart(f); renderLbSave(); } else toast('Still downloading — tap again when it says Save');
     return;
   }
-  lbFile = lbFile || cache.get(k);
+  lbFile = lbFile || readyFile(f);
   if (useBlob) { saveBlobs([lbFile]); markSaved([f]); toast('Saved to Downloads ✓'); renderChrome(); showLbMeta(); return; }
   navigator.share({ files: [lbFile] }).then(function(){ markSaved([f]); toast('Saved ✓'); renderChrome(); showLbMeta(); }).catch(function(e){ if (!e || e.name !== 'AbortError') toast('Couldn’t open the share sheet'); });
 };
@@ -1720,6 +1840,96 @@ window.addEventListener('keydown', function(e){
   else if (e.key === 'Escape' && selecting) setSelecting(false);
   else if ((e.key === 'Delete' || e.key === 'Backspace') && sel.size && !isMobile) deleteNames(Array.from(sel));
 });
+
+/* ================= test mode (node server.js --test): debug panel ================= */
+// Only when the server runs in test mode (it adds window.PD_TEST to the page). On the PC the panel switches the
+// server's fakes (testmode.js explains them); on a phone it shows what each download is doing.
+if (window.PD_TEST) (function(){
+  window.PD = { dls: dls, files: function(){ return files; } };   // for the automated tests in test/
+  var badge = document.createElement('button'), pn = document.createElement('div'), timer = 0;
+  badge.className = 'tbadge'; badge.textContent = 'TEST'; badge.title = 'Test mode: debug panel';
+  pn.className = 'tpanel'; pn.hidden = true;
+  document.body.appendChild(badge); document.body.appendChild(pn);
+  badge.onclick = function(){
+    pn.hidden = !pn.hidden; clearInterval(timer);
+    if (!pn.hidden) { if (isMobile) phoneView(); else pcView(); timer = setInterval(isMobile ? phoneView : refresh, 1000); }
+  };
+  function api(p, body){
+    return fetch('/api/test' + p, body === undefined ? { cache: 'no-store' } : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function(r){ return r.json(); });
+  }
+  // phone: every download in memory, with how far it got
+  function phoneView(){
+    var l = [];
+    dls.forEach(function(d){
+      var st = d.file ? 'done' : d.failed ? 'FAILED' : d.ctl ? 'downloading' : d.timer ? 'retry ' + d.tries + ' soon' : 'paused';
+      l.push(d.f.name.slice(0, 22) + '  ' + fmt(loadedBytes(d.f)) + ' / ' + fmt(d.f.size) + '  ' + st + (wantKeys.has(d.k) ? '' : '  (not in batch)'));
+    });
+    pn.innerHTML = '<h4>Downloads on this phone</h4><pre>' + esc(l.join('\n') || 'none') + '</pre><h4>This phone</h4><pre>' +
+      esc(myName + ' · id ' + myId + '\nshare sheet: ' + useShare + ' · save to Downloads: ' + useBlob + '\nbatch: ' + wantList.length + ' · dock: ' + dockMode) + '</pre>';
+  }
+  function sel_(id, opts, val){
+    return '<select id="' + id + '">' + opts.map(function(o){ return '<option value="' + esc(o[0]) + '"' + (String(o[0]) === String(val) ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>';
+  }
+  function b_(a, label){ return '<button class="btn sm" data-a="' + a + '">' + esc(label) + '</button>'; }
+  function pcView(){
+    api('').then(function(t){
+      var v = (info ? info.version : '1.0.0').split('.'); v[2] = +v[2] + 1;
+      var r = t.release || {};
+      pn.innerHTML =
+        '<h4>Network of this computer</h4><div class="trow">' + sel_('tNet', t.presets.map(function(p){ return [p, p === 'real' ? 'real network' : p]; }), t.net) + '</div>' +
+        '<h4>Phones on the Wi-Fi</h4><div class="trow">' + b_('iphone', '+ iPhone') + b_('android', '+ Android') + b_('nophones', 'Remove fake phones') + '</div>' +
+        '<h4>Downloads (all of them)</h4><div class="trow">' + sel_('tThr', [[0, 'full speed'], [52428800, '50 MB/s'], [8388608, '8 MB/s (good Wi-Fi)'], [1048576, '1 MB/s'], [204800, '200 KB/s']], t.throttle) +
+          b_('cut', 'Cut the next 3 at 1 MB') + '<label><input type="checkbox" id="tDisk"' + (t.diskFull ? ' checked' : '') + '> uploads: disk full</label></div>' +
+        '<h4>Add files</h4><div class="trow">' + b_('photos', '+ 6 photos') + b_('docs', '+ 3 files') + b_('big', '+ 400 MB video') + '</div>' +
+        '<h4>Pretend GitHub release</h4><div class="trow"><input type="text" id="tVer" value="' + esc(r.version || v.join('.')) + '">' +
+          sel_('tQuick', [['quick', 'quick update'], ['', 'installer only'], ['other', 'quick, for another exe'], ['broken', 'quick, crashes'], ['hang', 'quick, never starts']], r.version ? (r.quick === true ? 'quick' : r.quick || '') : 'quick') +
+          sel_('tUac', [['yes', 'Windows prompt: Yes'], ['no', 'Windows prompt: No'], ['fail', 'installer fails'], ['noreopen', 'doesn’t reopen']], r.uac || 'yes') +
+          b_('release', 'Publish') + b_('norelease', 'None') + '</div>' +
+        '<h4>Server</h4><pre id="tStats"></pre><div class="trow" style="margin-top:8px">' + b_('reset', 'Reset everything') + b_('quit', 'Stop server') + '</div>';
+      stats(t);
+    });
+  }
+  function stats(t){
+    var s = t.stats, e = $('tStats'); if (!e) return;
+    e.textContent = 'PhoneDrop ' + t.version + ' · pid ' + t.pid + '\n' + t.data + '\n' +
+      'requests ' + s.requests + ' · downloads ' + s.downloads + ' · sent ' + fmt(s.bytesSent) + '\n' +
+      'cut off ' + s.cut + ' · resumed (Range) ' + s.ranges + ' · closed early ' + s.closedEarly + ' · uploads ' + s.uploads + '\n' +
+      'phones: ' + (t.phones.map(function(p){ return p.name; }).join(', ') || 'none') + (t.cut ? '\nnext ' + t.cut.count + ' downloads get cut at ' + fmt(t.cut.after) : '');
+  }
+  function refresh(){ if (!pn.hidden) api('').then(stats, function(){}); }
+  pn.addEventListener('change', function(e){
+    var id = e.target.id;
+    if (id === 'tNet') api('/net', { preset: e.target.value }).then(function(){ toast('Network: ' + e.target.value); });
+    if (id === 'tThr') api('/throttle', { bps: +e.target.value });
+    if (id === 'tDisk') api('/faults', { diskFull: e.target.checked });
+  });
+  pn.addEventListener('click', function(e){
+    var b = e.target.closest('button[data-a]'); if (!b) return;
+    var a = b.dataset.a, n = Math.random().toString(36).slice(2, 6);
+    var acts = {
+      iphone: function(){ return api('/phones', { add: { id: 'iphone-' + n, name: 'iPhone' } }); },
+      android: function(){ return api('/phones', { add: { id: 'android-' + n, name: 'Android phone' } }); },
+      nophones: function(){ return api('/phones', { clear: true }); },
+      cut: function(){ return api('/faults', { cutAfter: 1048576, cutCount: 3 }).then(function(){ toast('The next 3 downloads get cut off at 1 MB'); }); },
+      photos: function(){ return api('/samples', { photos: 6 }); },
+      docs: function(){ return api('/samples', { files: 3 }); },
+      big: function(){ toast('Making a 400 MB file…'); return api('/samples', { big: 400 }); },
+      release: function(){
+        var q = $('tQuick').value;
+        return api('/release', { version: $('tVer').value.trim(), quick: q === 'quick' ? true : q || undefined, uac: $('tUac').value }).then(function(r){
+          toast(r.error ? r.error : r.update ? 'PhoneDrop ' + r.update.version + ' “released”' : 'Not newer than this copy');
+          try { localStorage.removeItem('pd.skipUpdate'); } catch (x) {}
+          skipUpd = '';
+        });
+      },
+      norelease: function(){ return api('/release', {}); },
+      reset: function(){ return api('/reset', {}).then(function(){ toast('Test mode reset'); }); },
+      quit: function(){ return api('/quit', {}).then(function(){ toast('Server stopped'); clearInterval(timer); throw new Error('stopped'); }); }
+    };
+    if (acts[a]) acts[a]().then(pcView, function(e){ if (!e || e.message !== 'stopped') toast('Test control failed'); });
+  });
+})();
 
 if (isMobile) $('dock').hidden = false;
 renderChrome();

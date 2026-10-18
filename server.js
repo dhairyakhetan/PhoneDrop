@@ -7,6 +7,8 @@
   node --watch server.js   restarts on edits (the page in public/ reloads on refresh, no restart needed)
   KEEP=1                   keep shared files between restarts (Windows: set KEEP=1 && node server.js)
   PORT=4000                use another port (HTTPS uses PORT + 443)
+  node server.js --test    test mode: fake phones, networks and updates, slow or broken downloads (testmode.js)
+  PHONEDROP_DATA=<folder>  keep the shared files and certificate in another folder
 
   No npm install needed to run. See CLAUDE.md for how everything fits together.
 */
@@ -20,14 +22,21 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { Readable, Transform } = require('stream');
 const { pipeline } = require('stream/promises');
+const zlib = require('zlib');
 
 // Running as PhoneDrop.exe (Node bundled in)? Then always act like an app and keep data in the user's folder.
 let IS_EXE = false;
 try { IS_EXE = require('node:sea').isSea(); } catch (e) {}
 const APP = IS_EXE || process.argv.includes('--app');
-const BASE = IS_EXE ? path.join(process.env.LOCALAPPDATA || os.homedir(), 'PhoneDrop') : __dirname;
-if (IS_EXE) {
-  fs.mkdirSync(BASE, { recursive: true });
+// test mode (`node server.js --test` or PHONEDROP_TEST=1), never in the exe: testmode.js explains it
+const TEST = (!!process.env.PHONEDROP_TEST || process.argv.includes('--test')) && !IS_EXE;
+const T = TEST ? require('./testmode.js') : null;
+// set when this file is a quick update that the built-in copy started: { dir, version, data, base } (see below)
+const LOADED = global.PHONEDROP_APP || null;
+const BASE = LOADED ? LOADED.data : IS_EXE ? path.join(process.env.LOCALAPPDATA || os.homedir(), 'PhoneDrop')
+  : process.env.PHONEDROP_DATA ? path.resolve(process.env.PHONEDROP_DATA) : TEST ? path.join(__dirname, '.test-data') : __dirname;
+fs.mkdirSync(BASE, { recursive: true });
+if (IS_EXE && !LOADED) {
   process.on('uncaughtException', (e) => {
     try { fs.appendFileSync(path.join(BASE, 'error-log.txt'), new Date().toISOString() + '  ' + (e && e.stack || e) + '\n'); } catch (x) {}
     process.exit(1);
@@ -38,14 +47,65 @@ if (IS_EXE) {
 // Read from the repo folder, or from inside PhoneDrop.exe (scripts/build.mjs embeds them as SEA assets
 // under these same relative paths). In dev the page is re-read on every request, so edits show on refresh.
 function asset(rel, encoding) {
-  if (IS_EXE) {
+  if (IS_EXE && !LOADED) { // a quick update reads its own files, from its folder
     const buf = Buffer.from(require('node:sea').getAsset(rel));
     return encoding ? buf.toString(encoding) : buf;
   }
   return fs.readFileSync(path.join(__dirname, rel), encoding);
 }
 const PKG = JSON.parse(asset('package.json', 'utf8'));
-const VERSION = PKG.version;
+const VERSION = (TEST && process.env.PHONEDROP_TEST_VERSION) || PKG.version; // test mode pretends to be another version after a fake update
+
+// ---------- quick updates: start the newest downloaded copy of the app instead of this one ----------
+// A quick update (scripts/quick-update.js) is unpacked into <data>/app/<version>/. At every start the copy built
+// into PhoneDrop.exe looks there and, if a newer version that fits this exe is waiting, runs that server.js
+// instead (it then reads its own page and icons). A copy that throws while starting, or doesn't get going 3
+// starts in a row, goes into app/bad.txt and is never used again: PhoneDrop carries on with the built-in one.
+const APP_FORMAT = 1; // how a downloaded copy gets started (these lines). Change it and older exes get the full installer.
+const APPS = path.join(BASE, 'app');
+// what this PhoneDrop.exe was built from (scripts/build.mjs): quick updates must have the same `base`
+let BUILD = { base: TEST ? 'test' : 'dev' };
+if (IS_EXE) try { BUILD = JSON.parse(require('node:sea').getAsset('build-info.json', 'utf8')); } catch (e) { BUILD = { base: 'none' }; }
+if (LOADED) BUILD = { base: LOADED.base };
+function badApps() { try { return fs.readFileSync(path.join(APPS, 'bad.txt'), 'utf8').split(/\s+/).filter(Boolean); } catch (e) { return []; } }
+function markBad(version, why) {
+  if (!badApps().includes(version)) {
+    try { fs.mkdirSync(APPS, { recursive: true }); fs.appendFileSync(path.join(APPS, 'bad.txt'), version + '\n'); } catch (e) {}
+    updateLog('quick update to ' + version + ' ' + why + ', so it won’t be used');
+  }
+  try { fs.rmSync(path.join(APPS, version), { recursive: true, force: true }); } catch (e) {}
+}
+function updateLog(line) { try { fs.appendFileSync(path.join(BASE, 'update-log.txt'), new Date().toISOString().slice(0, 19) + ' ' + line + '\n'); } catch (e) {} }
+function pickApp() {
+  const bad = badApps();
+  let best = null;
+  try {
+    for (const v of fs.readdirSync(APPS)) {
+      if (!/^\d+\.\d+\.\d+$/.test(v) || bad.includes(v) || !newer(v, best || VERSION)) continue;
+      try { if (JSON.parse(fs.readFileSync(path.join(APPS, v, 'manifest.json'), 'utf8')).base === BUILD.base) best = v; } catch (e) {}
+    }
+  } catch (e) { return null; }
+  if (!best) return null;
+  const dir = path.join(APPS, best), starts = path.join(dir, 'starts.txt');
+  let n = 0;
+  try { n = Number(fs.readFileSync(starts, 'utf8')) || 0; } catch (e) {}
+  if (n >= 3) { markBad(best, 'didn’t start 3 times'); return pickApp(); }
+  try { fs.writeFileSync(starts, String(n + 1)); } catch (e) {} // set back to 0 once it's running
+  return { dir, file: path.join(dir, 'server.js'), version: best, data: BASE, base: BUILD.base };
+}
+// only PhoneDrop.exe does this (test mode too, when it restarts itself after a quick update: PHONEDROP_TEST_APP)
+if (!LOADED && (IS_EXE || (TEST && process.env.PHONEDROP_TEST_APP))) {
+  for (let app = pickApp(); app; app = pickApp()) {
+    global.PHONEDROP_APP = app;
+    try {
+      require('module').createRequire(app.file)(app.file);
+      return; // the newer copy is running now (a file's top level is a function in Node, so this ends it)
+    } catch (e) { // broke while starting: never again, try the next one (or carry on with this built-in copy)
+      global.PHONEDROP_APP = null;
+      markBad(app.version, 'crashed while starting (' + String((e && e.message) || e).split('\n')[0] + ')');
+    }
+  }
+}
 // installed with PhoneDrop-Setup.exe (it writes installed.txt next to the exe)? Then the installer made the
 // shortcuts, and in-app updates are on.
 const INSTALLED = IS_EXE && fs.existsSync(path.join(path.dirname(process.execPath), 'installed.txt'));
@@ -57,6 +117,7 @@ const ICON_FILES = {
   '/icon.png': [asset('public/icon.png'), 'image/png'],
   '/favicon.png': [asset('public/favicon.png'), 'image/png'],
   '/apple-touch-icon.png': [asset('public/apple-touch-icon.png'), 'image/png'],
+  '/manifest.json': [asset('public/manifest.json'), 'application/manifest+json'], // name + icon for the app window
 };
 
 const HTTP_PORT = Number(process.env.PORT) || 3000;
@@ -91,6 +152,7 @@ const httpUrl = (ip) => 'http://' + (ip || net.ip) + ':' + HTTP_PORT;
 const httpsUrl = (ip) => 'https://' + (ip || net.ip) + ':' + HTTPS_PORT;
 
 function candidates() {
+  if (TEST && T.net) return T.net.ifaces.map(([iface, ip]) => ({ ip, iface })).filter((c) => !c.ip.startsWith('169.254.') && !VIRTUAL.test(c.iface));
   const out = [];
   for (const [iface, list] of Object.entries(os.networkInterfaces()))
     for (const i of list || [])
@@ -99,6 +161,7 @@ function candidates() {
 }
 // the local address of the default route (a UDP "connect" sends nothing; it just asks the OS which way it would go)
 function routeIP() {
+  if (TEST && T.net) return Promise.resolve(T.net.route || '');
   return new Promise((resolve) => {
     const s = require('dgram').createSocket('udp4');
     const done = (ip) => { try { s.close(); } catch (e) {} resolve(ip); };
@@ -129,17 +192,20 @@ async function refreshNet(lookup) {
 }
 net.nets = candidates().sort((a, b) => (WIFI.test(b.iface) ? 1 : 0) - (WIFI.test(a.iface) ? 1 : 0)).map(describe);
 net.ip = net.nets.length ? net.nets[0].ip : 'localhost';
-let netBusy = false;
-async function watchNet() {
-  if (netBusy) return;
-  netBusy = true;
-  try {
-    if (await refreshNet(Date.now() - (net.looked || 0) > 120000)) {
-      console.log('  Network changed       : ' + netLabel(net.nets[0]) + (net.nets.length ? ' · ' + httpUrl() : ''));
-      sendAll('net', netInfo());
-    }
-  } catch (e) {}
-  netBusy = false;
+let netBusy = null;
+// every 4 s (skipped while a check runs); `now` = check right away, after any running check (Wi-Fi names too)
+async function watchNet(now) {
+  while (netBusy) { if (!now) return; await netBusy; }
+  netBusy = (async () => {
+    try {
+      if (await refreshNet(now || Date.now() - (net.looked || 0) > 120000)) {
+        console.log('  Network changed       : ' + netLabel(net.nets[0]) + (net.nets.length ? ' · ' + httpUrl() : ''));
+        sendAll('net', netInfo());
+      }
+    } catch (e) {}
+  })();
+  await netBusy;
+  netBusy = null;
 }
 function netInfo() {
   return { ip: net.ip, http: httpUrl(), https: httpsUp ? httpsUrl() : null,
@@ -158,6 +224,7 @@ function run(cmd, args) {
 async function lookupSSIDs() {
   const ssid = {};
   net.looked = Date.now();
+  if (TEST && T.net) { net.ssid = Object.assign({}, T.net.ssid); return; }
   if (process.platform === 'win32') {
     const out = await run('powershell', ['-NoProfile', '-NonInteractive', '-Command',
       '[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-NetConnectionProfile | ForEach-Object { $a = Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue; ' +
@@ -199,9 +266,11 @@ const MIME = {
 const mimeOf = (n) => MIME[path.extname(n).slice(1).toLowerCase()] || 'application/octet-stream';
 
 function safeName(n) {
-  n = path.basename(String(n || 'file')).replace(/[\x00-\x1f<>:"/\\|?*]/g, '_').replace(/^\.+/, '').trim();
+  n = String(n || 'file').split(/[\\/]/).pop().replace(/[\x00-\x1f<>:"/\\|?*]/g, '_').replace(/^\.+/, '').replace(/[. ]+$/, '').trim();
+  if (/^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(n)) n = '_' + n; // names Windows keeps for devices
   return n.slice(0, 200) || 'file';
 }
+function decodeName(s) { try { return safeName(decodeURIComponent(s)); } catch (e) { return null; } } // bad %-encoding -> null
 function uniqueName(n) {
   const ext = path.extname(n), base = path.basename(n, ext);
   let out = n, i = 1;
@@ -214,6 +283,9 @@ function json(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 const pendingThumb = new Set();
+// upload id -> saved name. A phone sends a file again when its connection dropped, but sometimes the file had
+// arrived and only the answer was lost: then the second copy is thrown away instead of becoming "photo (1).jpg".
+const uploaded = new Map();
 function listFiles() {
   const out = [];
   for (const name of fs.readdirSync(DIR)) {
@@ -250,21 +322,31 @@ function forget(name) {
   for (const ext of ['.jpg', '.json']) { try { fs.unlinkSync(path.join(THUMBS, name + ext)); } catch (e) {} }
 }
 const BIG_BUF = { highWaterMark: 1 << 20 }; // 1 MB chunks: much faster for big videos
-function sendFile(req, res, file, type, extra) {
-  let size;
-  try { size = fs.statSync(file).size; } catch (e) { return json(res, 404, { error: 'not found' }); }
-  const headers = Object.assign({ 'Content-Type': type, 'Accept-Ranges': 'bytes' }, extra);
-  const m = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
+// `shared` = one of the shared files (test mode can slow those down or cut them off)
+function sendFile(req, res, file, type, extra, shared) {
+  let st;
+  try { st = fs.statSync(file); } catch (e) { return json(res, 404, { error: 'not found' }); }
+  if (!st.isFile()) return json(res, 404, { error: 'not found' });
+  const size = st.size, etag = '"' + size.toString(36) + '-' + Math.round(st.mtimeMs).toString(36) + '"', modified = st.mtime.toUTCString();
+  // ETag/Last-Modified let a browser resume an interrupted download (Range + If-Range) instead of starting over
+  const headers = Object.assign({ 'Content-Type': type, 'Accept-Ranges': 'bytes', ETag: etag, 'Last-Modified': modified }, extra);
+  const ifRange = req.headers['if-range'];
+  const m = (!ifRange || ifRange === etag || ifRange === modified) && /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
+  // pipeline, not .pipe(): when the phone hangs up (or pauses a download) the file is closed again. Left open, it
+  // can't be deleted on Windows, and they add up. A read error ends this response, not PhoneDrop.
+  const pipe = (stream) => pipeline([stream].concat(TEST && shared ? [T.download(req, res)] : [], [res])).catch(() => res.destroy());
   if (m && (m[1] || m[2])) {
     const start = m[1] ? parseInt(m[1], 10) : Math.max(0, size - parseInt(m[2], 10));
     const end = m[1] && m[2] ? Math.min(parseInt(m[2], 10), size - 1) : size - 1;
     if (start >= size || start > end) { res.writeHead(416, { 'Content-Range': 'bytes */' + size }); return res.end(); }
     res.writeHead(206, Object.assign(headers, { 'Content-Range': 'bytes ' + start + '-' + end + '/' + size, 'Content-Length': end - start + 1 }));
-    return fs.createReadStream(file, { start, end, highWaterMark: 1 << 20 }).pipe(res);
+    res.range = [start, end, size]; // (getHeader() doesn't see headers given to writeHead)
+    if (req.method === 'HEAD') return res.end();
+    return pipe(fs.createReadStream(file, { start, end, highWaterMark: 1 << 20 }));
   }
   res.writeHead(200, Object.assign(headers, { 'Content-Length': size }));
   if (req.method === 'HEAD') return res.end();
-  fs.createReadStream(file, BIG_BUF).pipe(res);
+  pipe(fs.createReadStream(file, BIG_BUF));
 }
 
 // ---------- live updates (Server-Sent Events) ----------
@@ -276,6 +358,14 @@ function sendAll(ev, data) { const m = 'event: ' + ev + '\ndata: ' + JSON.string
 function sendLocal(ev, data) { const m = 'event: ' + ev + '\ndata: ' + JSON.stringify(data) + '\n\n'; for (const c of clients) if (c.local) c.write(m); }
 function devList() { return [...devices.values()].filter((d) => d.conns > 0 || d.lingering).map((d) => ({ id: d.id, name: d.name })); }
 function readJSON(req, cb) { let b = ''; req.on('data', (c) => { if (b.length < 1e6) b += c; }); req.on('end', () => { try { cb(JSON.parse(b)); } catch (e) { cb(null); } }); }
+function clearAll() {
+  for (const f of listFiles()) {
+    try { fs.unlinkSync(path.join(DIR, f.name)); } catch (e) {}
+    forget(f.name);
+  }
+  savedBy.clear(); gotOnPc.clear();
+  bump();
+}
 let bumpTimer = null;
 function bump() {
   clearTimeout(bumpTimer);
@@ -309,17 +399,21 @@ function handler(req, res) {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
   const q = (k) => url.searchParams.get(k);
+  if (TEST) {
+    T.log(req, res, !isLocal(req));
+    if (p === '/api/test' || p.startsWith('/api/test/')) return T.route(req, res, p);
+  }
 
   if (req.method === 'GET' && p === '/') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-    return res.end(page());
+    return res.end(TEST ? page().replace('</head>', '<script>window.PD_TEST = true;</script></head>') : page()); // test mode: badge + debug panel
   }
   if (req.method === 'GET' && ICON_FILES[p]) {
     res.writeHead(200, { 'Content-Type': ICON_FILES[p][1], 'Cache-Control': 'public, max-age=86400' });
     return res.end(ICON_FILES[p][0]);
   }
   if (req.method === 'GET' && p === '/api/info') {
-    return json(res, 200, Object.assign({ host: HOST, app: APP, version: VERSION, update: isLocal(req) ? updateInfo() : null }, netInfo()));
+    return json(res, 200, Object.assign({ host: HOST, app: APP, version: VERSION, test: TEST, update: isLocal(req) ? updateInfo() : null }, netInfo()));
   }
   // only from PhoneDrop's own page on this computer: not phones on the Wi-Fi, not other websites open in a browser here
   if (req.method === 'POST' && p === '/api/update/install') {
@@ -366,7 +460,7 @@ function handler(req, res) {
         if (d.conns <= 0) {
           // phones drop the connection briefly when the screen locks or the page reloads: wait before saying they left
           d.lingering = true; d.conns = 0;
-          d.gone = setTimeout(() => { d.lingering = false; sendAll('devices', devList()); }, 8000);
+          d.gone = setTimeout(() => { d.lingering = false; sendAll('devices', devList()); }, TEST ? T.grace : 8000);
         }
       });
     }
@@ -377,15 +471,16 @@ function handler(req, res) {
     return;
   }
   if (req.method === 'GET' && p === '/qr.svg') {
-    try {
-      res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-store' });
-      return res.end(qrSVG(q('u') || httpUrl()));
-    } catch (e) { return json(res, 500, { error: 'qr failed' }); }
+    let svg;
+    try { svg = qrSVG(q('u') || httpUrl()); } catch (e) { return json(res, 400, { error: 'too long for a QR code' }); }
+    res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-store' });
+    return res.end(svg);
   }
 
   // upload: streamed to a hidden temp file, renamed when complete (no half-files ever show up)
   if (req.method === 'POST' && p === '/upload') {
     const name = safeName(q('name'));
+    if (TEST) { T.stats.uploads++; if (T.diskFull) { req.resume(); return json(res, 507, { error: 'disk full' }); } }
     const tmp = path.join(DIR, '.up-' + crypto.randomBytes(6).toString('hex'));
     const out = fs.createWriteStream(tmp, BIG_BUF);
     let failed = false;
@@ -397,9 +492,13 @@ function handler(req, res) {
       if (!res.headersSent) json(res, full ? 507 : 500, { error: full ? 'disk full' : 'write failed' });
       req.unpipe(out); req.resume();
     });
+    const uid = String(q('uid') || '').slice(0, 40);
     out.on('finish', () => {
       if (failed) return;
+      const prev = uid && uploaded.get(uid);
+      if (prev && fs.existsSync(path.join(DIR, prev))) { fs.rm(tmp, { force: true }, () => {}); return json(res, 200, { name: prev }); }
       const final = uniqueName(name);
+      if (uid) { uploaded.set(uid, final); if (uploaded.size > 1000) uploaded.delete(uploaded.keys().next().value); }
       try { fs.renameSync(tmp, path.join(DIR, final)); } catch (e) { fail(); return json(res, 500, { error: 'save failed' }); }
       // remember which phone sent it: it isn't offered back to that phone, and the PC shows it as "from iPhone"
       if (!isLocal(req)) setMeta(final, { from: { id: String(q('from') || '').slice(0, 40), name: String(q('fromName') || 'Phone').slice(0, 40) } });
@@ -425,21 +524,15 @@ function handler(req, res) {
     });
     return;
   }
-  if (req.method === 'DELETE' && p === '/api/files') {
-    for (const f of listFiles()) {
-      try { fs.unlinkSync(path.join(DIR, f.name)); } catch (e) {}
-      forget(f.name);
-    }
-    savedBy.clear(); gotOnPc.clear();
-    bump();
-    return json(res, 200, { ok: true });
-  }
+  if (req.method === 'DELETE' && p === '/api/files') { clearAll(); return json(res, 200, { ok: true }); }
   if (p.startsWith('/thumbs/')) {
-    const name = safeName(decodeURIComponent(p.slice(8)));
+    const name = decodeName(p.slice(8));
+    if (!name) return json(res, 400, { error: 'bad file name' });
     return sendFile(req, res, path.join(THUMBS, name + '.jpg'), 'image/jpeg', { 'Cache-Control': 'public, max-age=31536000, immutable' });
   }
   if (p.startsWith('/files/')) {
-    const name = safeName(decodeURIComponent(p.slice(7)));
+    const name = decodeName(p.slice(7));
+    if (!name) return json(res, 400, { error: 'bad file name' });
     const file = path.join(DIR, name);
     if (req.method === 'DELETE') {
       try { fs.unlinkSync(file); } catch (e) {}
@@ -449,13 +542,13 @@ function handler(req, res) {
     }
     // a download to this computer that finished (all the way to the last byte) counts as transferred
     if (q('dl') && req.method === 'GET' && isLocal(req)) res.on('finish', () => {
-      const r = /-(\d+)\/(\d+)$/.exec(String(res.getHeader('Content-Range') || ''));
-      if ((res.statusCode === 200 || (r && +r[1] === +r[2] - 1)) && !gotOnPc.has(name)) { gotOnPc.add(name); bump(); }
+      const r = res.range; // a resumed download that reached the last byte counts too
+      if ((res.statusCode === 200 || (r && r[1] === r[2] - 1)) && !gotOnPc.has(name)) { gotOnPc.add(name); bump(); }
     });
     return sendFile(req, res, file, mimeOf(name), {
       'Cache-Control': q('v') ? 'public, max-age=31536000, immutable' : 'no-cache',
       'Content-Disposition': (q('dl') ? 'attachment' : 'inline') + "; filename*=UTF-8''" + encodeURIComponent(name),
-    });
+    }, true);
   }
   json(res, 404, { error: 'not found' });
 }
@@ -506,11 +599,15 @@ function makeSelfSigned(ips) {
 
 // ---------- app mode: own window, quit when it's closed ----------
 let localClients = 0, sawLocal = false, quitTimer = null;
-function isLocal(req) { const a = req.socket.remoteAddress || ''; return a === '::1' || a === '127.0.0.1' || a === '::ffff:127.0.0.1'; }
+function isLocal(req) {
+  // test mode: a phone browser (or the PC's browser pretending to be one) counts as a phone on the Wi-Fi
+  if (TEST && (req.headers['x-phonedrop-phone'] || /iPhone|iPad|Android|Mobi/.test(req.headers['user-agent'] || ''))) return false;
+  const a = req.socket.remoteAddress || ''; return a === '::1' || a === '127.0.0.1' || a === '::ffff:127.0.0.1';
+}
 function maybeQuit() {
   if (!APP || !sawLocal) return;
   clearTimeout(quitTimer);
-  quitTimer = setTimeout(() => { if (localClients <= 0) { console.log('  Window closed. Bye!'); process.exit(0); } }, 6000);
+  quitTimer = setTimeout(() => { if (localClients <= 0 && !handingOver) { console.log('  Window closed. Bye!'); process.exit(0); } }, 6000);
 }
 function openWindow() {
   const url = 'http://localhost:' + HTTP_PORT;
@@ -534,21 +631,42 @@ function openWindow() {
       c.unref();
     } catch (e) { console.log('  Open ' + url + ' in your browser.'); }
   };
-  if (exe) run(exe, ['--app=' + url, '--window-size=1220,880'], { windowsHide: false });
+  if (exe) { run(exe, ['--app=' + url, '--window-size=1220,880'], { windowsHide: false }); labelWindow(); }
   else if (process.platform === 'win32') run('cmd', ['/c', 'start', '', url]);
   else run(process.platform === 'darwin' ? 'open' : 'xdg-open', [url]);
 }
 
+// Windows: the browser's app window would show the page's 16 px favicon in the taskbar (blurry) and pin as a
+// browser shortcut to localhost. installer/appid.ps1 gives it PhoneDrop's own taskbar button and icon instead.
+function labelWindow() {
+  if (!IS_EXE || process.platform !== 'win32') return;
+  try {
+    const cmd = '& {\n' + asset('installer/appid.ps1', 'utf8') + '\n} -Exe ' + psq(process.execPath);
+    const c = spawn('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+      '-EncodedCommand', Buffer.from(cmd, 'utf16le').toString('base64')], { detached: true, windowsHide: true, stdio: 'ignore' });
+    c.on('error', () => {});
+    c.unref();
+  } catch (e) {}
+}
+
 // ---------- in-app updates (installed PhoneDrop.exe only, never `node server.js`) ----------
-// Asks GitHub for the newest *stable* release: /releases/latest skips pre-releases and drafts. The page on this
-// PC then shows "Update available". Update now downloads PhoneDrop-Setup.exe, checks its size and SHA-256 and
-// runs it silently; the installer closes PhoneDrop, updates it and opens it again.
+// Asks GitHub for the newest *stable* release: /releases/latest skips pre-releases and drafts, and versions in
+// between are skipped (it's checked again right before installing). The page on this PC then shows
+// "Update available". Update now:
+// - quick update, when the release has one for this exe (scripts/quick-update.js): downloads ~100 KB of app
+//   files, checks the SHA-256, unpacks them into app/<version>/ and restarts PhoneDrop into them. No installer,
+//   no Windows prompt. If the new copy doesn't answer within 30 s, this one carries on and uses the installer next time.
+// - otherwise PhoneDrop-Setup.exe: downloads it, checks its size and SHA-256 and runs it silently; the installer
+//   closes PhoneDrop, updates it and opens it again.
 const REPO = (/^github:([\w.-]+\/[\w.-]+)$/.exec(PKG.repository || '') || [])[1];
-const UPDATES = INSTALLED && !!REPO;
+const UPDATES = (INSTALLED && !!REPO) || TEST; // test mode: a fake GitHub (testmode.js) instead of the real one
+const gh = (url, opts) => (TEST ? T.fetch(url, opts) : fetch(url, opts));
 const UPDATE_HOSTS = ['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com'];
 const UPDATED_FLAG = path.join(BASE, 'updated.txt'); // left for the next start: keep the shared files, reuse the window
-// { version, notes, page, url, sumUrl, size, state: '' | downloading | installing | restarting | failed | cancelled, error }
+// { version, notes, page, url, sumUrl, size, quick: {url, sumUrl, size} | null,
+//   state: '' | downloading | installing | restarting | failed | cancelled, error }
 let update = null;
+let handingOver = false; // a quick update is restarting PhoneDrop: the window is disconnected for a moment, don't quit
 
 function newer(a, b) {
   const x = a.split('.').map(Number), y = b.split('.').map(Number);
@@ -556,33 +674,50 @@ function newer(a, b) {
   return false;
 }
 function updateInfo() {
-  return update && { version: update.version, notes: update.notes, page: update.page, size: update.size, state: update.state, error: update.error };
+  return update && { version: update.version, notes: update.notes, page: update.page, size: update.quick ? update.quick.size : update.size,
+    quick: !!update.quick, state: update.state, error: update.error };
 }
 function justUpdated() { try { fs.unlinkSync(UPDATED_FLAG); return true; } catch (e) { return false; } }
-function removeOldInstallers() {
+function removeOldFiles() {
+  if (update && ['downloading', 'installing', 'restarting'].includes(update.state)) return; // not the files being installed
   try {
     for (const f of fs.readdirSync(os.tmpdir()))
-      if (/^PhoneDrop-Setup-[\d.]+\.exe$/.test(f)) fs.rm(path.join(os.tmpdir(), f), { force: true }, () => {});
+      if (/^PhoneDrop-(Setup-[\d.]+\.exe|app-[\d.]+\.json\.gz)$/.test(f)) fs.rm(path.join(os.tmpdir(), f), { force: true }, () => {});
   } catch (e) {}
+  // quick updates: keep only the one running (an older or broken one is never used again)
+  try {
+    for (const f of fs.readdirSync(APPS))
+      if (f !== 'bad.txt' && !(LOADED && f === LOADED.version)) fs.rm(path.join(APPS, f), { recursive: true, force: true }, () => {});
+  } catch (e) {}
+}
+// the newest stable release, if it's newer than this copy and its installer is attached (CI adds it a few minutes
+// after publishing), else null
+async function latestRelease() {
+  const r = await gh('https://api.github.com/repos/' + REPO + '/releases/latest', {
+    headers: { 'User-Agent': 'PhoneDrop/' + VERSION, Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(20000) });
+  if (!r.ok) return null;
+  const rel = await r.json();
+  const v = String(rel.tag_name || '').replace(/^v/, '');
+  if (!/^\d+\.\d+\.\d+$/.test(v) || !newer(v, VERSION)) return null;
+  const file = (n) => (rel.assets || []).find((a) => a.name === n);
+  const setup = file('PhoneDrop-Setup.exe'), sum = file('PhoneDrop-Setup.exe.sha256');
+  if (!setup || !sum) return null;
+  const qn = 'PhoneDrop-app-' + BUILD.base + '.json.gz', qa = file(qn), qs = file(qn + '.sha256');
+  return {
+    version: v, notes: String(rel.body || '').split('<!-- install -->')[0].trim(), // the install help CI adds goes below that line
+    page: rel.html_url || 'https://github.com/' + REPO + '/releases/latest',
+    url: setup.browser_download_url, sumUrl: sum.browser_download_url, size: setup.size,
+    quick: qa && qs && !badApps().includes(v) ? { url: qa.browser_download_url, sumUrl: qs.browser_download_url, size: qa.size } : null,
+    state: '', error: '',
+  };
 }
 async function checkUpdate() {
   if (update && ['downloading', 'installing', 'restarting'].includes(update.state)) return;
   try {
-    const r = await fetch('https://api.github.com/repos/' + REPO + '/releases/latest', {
-      headers: { 'User-Agent': 'PhoneDrop/' + VERSION, Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(20000) });
-    if (!r.ok) return;
-    const rel = await r.json();
-    const v = String(rel.tag_name || '').replace(/^v/, '');
-    if (!/^\d+\.\d+\.\d+$/.test(v) || !newer(v, VERSION) || (update && update.version === v)) return;
-    const file = (n) => (rel.assets || []).find((a) => a.name === n);
-    const setup = file('PhoneDrop-Setup.exe'), sum = file('PhoneDrop-Setup.exe.sha256');
-    if (!setup || !sum) return; // just published: CI is still building the installer, try again next time
-    update = {
-      version: v, notes: String(rel.body || '').split('<!-- install -->')[0].trim(), // the install help CI adds goes below that line
-      page: rel.html_url || 'https://github.com/' + REPO + '/releases/latest',
-      url: setup.browser_download_url, sumUrl: sum.browser_download_url, size: setup.size, state: '', error: '',
-    };
-    console.log('  PhoneDrop ' + v + ' is available');
+    const u = await latestRelease();
+    if (!u || (update && update.version === u.version)) return;
+    update = u;
+    console.log('  PhoneDrop ' + u.version + ' is available' + (u.quick ? ' (quick update)' : ''));
     sendLocal('update', updateInfo());
   } catch (e) {} // offline or rate-limited: try again next time
 }
@@ -591,7 +726,7 @@ async function githubGet(url, signal) {
   for (let hop = 0; hop < 5; hop++) {
     const u = new URL(url);
     if (u.protocol !== 'https:' || !UPDATE_HOSTS.includes(u.hostname)) throw new Error('unexpected download address ' + u.hostname);
-    const r = await fetch(u, { redirect: 'manual', signal, headers: { 'User-Agent': 'PhoneDrop/' + VERSION } });
+    const r = await gh(u.href, { redirect: 'manual', signal, headers: { 'User-Agent': 'PhoneDrop/' + VERSION } });
     const to = r.status >= 300 && r.status < 400 && r.headers.get('location');
     if (!to) { if (!r.ok) throw new Error('download failed (HTTP ' + r.status + ')'); return r; }
     if (r.body) await r.body.cancel();
@@ -599,34 +734,61 @@ async function githubGet(url, signal) {
   }
   throw new Error('too many redirects');
 }
-async function installUpdate() {
-  const u = update, file = path.join(os.tmpdir(), 'PhoneDrop-Setup-' + u.version + '.exe');
-  u.state = 'downloading'; u.error = '';
-  sendLocal('update', updateInfo());
+// download `url` to `file`, with progress for the page; throws unless it's complete and matches the .sha256 next to it
+async function downloadChecked(url, sumUrl, size, file) {
   const ac = new AbortController();
   let stall = null;
-  const alive = () => { clearTimeout(stall); stall = setTimeout(() => ac.abort(), 60000); }; // nothing for a minute: give up
+  const alive = () => { clearTimeout(stall); stall = setTimeout(() => ac.abort(), TEST ? 3000 : 60000); }; // nothing for a minute: give up
   try {
     alive();
-    const sum = (/\b[0-9a-f]{64}\b/i.exec(await (await githubGet(u.sumUrl, ac.signal)).text()) || [])[0];
+    const sum = (/\b[0-9a-f]{64}\b/i.exec(await (await githubGet(sumUrl, ac.signal)).text()) || [])[0];
     if (!sum) throw new Error('the checksum file is empty');
-    const r = await githubGet(u.url, ac.signal);
+    const r = await githubGet(url, ac.signal);
     const hash = crypto.createHash('sha256');
     let got = 0, last = 0;
     const count = new Transform({ transform(chunk, enc, cb) {
       got += chunk.length; hash.update(chunk); alive();
-      if (Date.now() - last > 200) { last = Date.now(); sendLocal('update-progress', { got, total: u.size }); }
+      if (Date.now() - last > 200) { last = Date.now(); sendLocal('update-progress', { got, total: size }); }
       cb(null, chunk);
     } });
     await pipeline(Readable.fromWeb(r.body), count, fs.createWriteStream(file));
-    clearTimeout(stall);
-    sendLocal('update-progress', { got, total: u.size });
-    if (got !== u.size) throw new Error('the download was incomplete');
+    sendLocal('update-progress', { got, total: size });
+    if (got !== size) throw new Error('the download was incomplete');
     if (hash.digest('hex') !== sum.toLowerCase()) throw new Error('the download was damaged (checksum mismatch)');
   } catch (e) {
-    clearTimeout(stall);
     fs.rm(file, { force: true }, () => {});
-    u.state = 'failed'; u.error = ac.signal.aborted ? 'the download stopped' : String((e && e.message) || e);
+    throw ac.signal.aborted ? new Error('the download stopped') : e;
+  } finally { clearTimeout(stall); }
+}
+async function installUpdate() {
+  let u = update;
+  u.state = 'downloading'; u.error = '';
+  sendLocal('update', updateInfo());
+  // a newer release since the banner appeared? Install that one instead (always only the newest)
+  try {
+    const fresh = await latestRelease();
+    if (fresh && newer(fresh.version, u.version)) {
+      console.log('  PhoneDrop ' + fresh.version + ' came out since, installing that instead of ' + u.version);
+      u = update = Object.assign(fresh, { state: 'downloading' });
+      sendLocal('update', updateInfo());
+    }
+  } catch (e) {}
+  if (u.quick) {
+    try {
+      await quickUpdate(u);
+      return restartInto(u);
+    } catch (e) {
+      console.log('  Quick update didn’t work (' + ((e && e.message) || e) + '), using the installer');
+      updateLog('quick update to ' + u.version + ' failed: ' + ((e && e.message) || e) + ', using the installer');
+      u.quick = null;
+      sendLocal('update', updateInfo());
+    }
+  }
+  const file = path.join(os.tmpdir(), 'PhoneDrop-Setup-' + u.version + '.exe');
+  try {
+    await downloadChecked(u.url, u.sumUrl, u.size, file);
+  } catch (e) {
+    u.state = 'failed'; u.error = String((e && e.message) || e);
     console.log('  Update failed: ' + u.error);
     return sendLocal('update', updateInfo());
   }
@@ -669,15 +831,96 @@ async function installUpdate() {
     sendLocal('update', updateInfo());
   };
   const watch = setInterval(() => { if (fs.existsSync(UPDATED_FLAG)) handedOver(); }, 250);
+  if (TEST) return T.launchInstaller(u.version, () => { fs.writeFileSync(UPDATED_FLAG, u.version); handedOver(); }, ended);
   try {
     const c = spawn('powershell', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', ps], { detached: true, windowsHide: true, stdio: 'ignore' });
     c.on('error', () => ended(-1));
     c.on('exit', (code) => (fs.existsSync(UPDATED_FLAG) ? handedOver() : ended(code)));
   } catch (e) { ended(-1); }
 }
+// quick update: download, check and unpack the app files into app/<version>/
+async function quickUpdate(u) {
+  const q = u.quick, gz = path.join(os.tmpdir(), 'PhoneDrop-app-' + u.version + '.json.gz');
+  await downloadChecked(q.url, q.sumUrl, q.size, gz);
+  let b;
+  try { b = JSON.parse(zlib.gunzipSync(fs.readFileSync(gz))); } finally { fs.rm(gz, { force: true }, () => {}); }
+  if (!b || b.format !== 1 || b.version !== u.version || b.base !== BUILD.base || !b.files || !b.files['server.js'])
+    throw new Error('the quick update doesn’t fit this PhoneDrop');
+  const dir = path.join(APPS, u.version), part = dir + '.part';
+  fs.rmSync(part, { recursive: true, force: true });
+  for (const [rel, [enc, data]] of Object.entries(b.files)) {
+    const to = path.join(part, rel);
+    if (!to.startsWith(part + path.sep) || !['utf8', 'base64'].includes(enc)) throw new Error('bad file in the quick update: ' + rel);
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.writeFileSync(to, Buffer.from(data, enc));
+  }
+  fs.writeFileSync(path.join(part, 'manifest.json'), JSON.stringify({ version: u.version, base: b.base, files: Object.keys(b.files) }, null, 1));
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.renameSync(part, dir); // complete or not there at all
+}
+// restart into the quick update: free the ports, start PhoneDrop again (which picks the new copy) and wait until
+// it answers with the new version. If it doesn't, stop it, never use that copy again, and carry on as before.
+async function restartInto(u) {
+  u.state = 'restarting';
+  sendLocal('update', updateInfo());
+  console.log('  Restarting into PhoneDrop ' + u.version);
+  fs.writeFileSync(UPDATED_FLAG, u.version); // the new copy keeps the shared files and waits for this window
+  handingOver = true;
+  await sleep(300); // let the page hear "restarting"
+  await closeServers();
+  const env = Object.assign({}, process.env);
+  if (TEST) { env.PHONEDROP_TEST_APP = '1'; delete env.PHONEDROP_TEST_VERSION; }
+  const log = TEST ? fs.openSync(path.join(BASE, 'restart.log'), 'a') : 'ignore';
+  let child = null, exited = false;
+  try {
+    child = spawn(process.execPath, process.argv.slice(IS_EXE ? 2 : 1), { detached: true, stdio: ['ignore', log, log], env, windowsHide: false });
+    child.on('error', () => { exited = true; });
+    child.on('exit', () => { exited = true; });
+    child.unref();
+  } catch (e) { exited = true; }
+  let seen = '';
+  for (const t0 = Date.now(); Date.now() - t0 < (TEST ? 10000 : 30000) && !exited;) {
+    await sleep(400);
+    seen = await localVersion();
+    if (seen) break;
+  }
+  if (seen === u.version) { updateLog('quick update to ' + u.version + ': running'); console.log('  PhoneDrop ' + u.version + ' is running. Bye!'); process.exit(0); }
+  // didn't come up (or came up as the old version because the new one crashed): undo
+  const why = seen ? 'crashed while starting' : exited ? 'quit while starting' : 'didn’t start in time';
+  try { if (child && !exited) process.kill(child.pid); } catch (e) {}
+  await sleep(500);
+  markBad(u.version, why);
+  try { fs.unlinkSync(UPDATED_FLAG); } catch (e) {}
+  await reopenServers();
+  handingOver = false;
+  u.quick = null; // next try uses the installer
+  u.state = 'failed'; u.error = 'the quick update didn’t start, so this is still ' + VERSION + '. Try again to use the installer';
+  sendLocal('update', updateInfo());
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function localVersion() {
+  return new Promise((resolve) => {
+    const r = http.get({ host: '127.0.0.1', port: HTTP_PORT, path: '/api/info', timeout: 2000 }, (res) => {
+      let b = ''; res.on('data', (c) => { b += c; });
+      res.on('end', () => { try { resolve(JSON.parse(b).version || ''); } catch (e) { resolve(''); } });
+    });
+    r.on('timeout', () => r.destroy());
+    r.on('error', () => resolve(''));
+  });
+}
+function closeServers() {
+  for (const c of clients) c.end();
+  const close = (srv) => new Promise((r) => { srv.close(() => r()); srv.closeAllConnections(); setTimeout(r, 3000); });
+  return Promise.all([close(httpServer), httpsUp ? close(httpsServer) : null]);
+}
+function reopenServers() {
+  const open = (srv, port) => new Promise((r) => { srv.once('listening', r); srv.listen(port, '0.0.0.0'); setTimeout(r, 3000); });
+  return Promise.all([open(httpServer, HTTP_PORT), httpsUp ? open(httpsServer, HTTPS_PORT) : null]);
+}
 
 // ---------- start ----------
 function portBusy(port) {
+  started();
   if (APP) { openWindow(); setTimeout(() => process.exit(0), 300); return; } // already running: just show it
   console.log('\n  PhoneDrop is already running (port ' + port + ' is in use).');
   console.log('  Close the other PhoneDrop window, or press Ctrl+C in it, then run this again.');
@@ -688,8 +931,11 @@ function portBusy(port) {
 function noLimits(srv) { srv.requestTimeout = 0; srv.headersTimeout = 60000; srv.keepAliveTimeout = 10000; return srv; }
 const httpServer = noLimits(http.createServer(handler));
 httpServer.on('error', (e) => { if (e.code === 'EADDRINUSE') portBusy(HTTP_PORT); else throw e; });
+// a quick update that got this far works: reset its count of failed starts
+function started() { if (LOADED) try { fs.writeFileSync(path.join(LOADED.dir, 'starts.txt'), '0'); } catch (e) {} }
 httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
-  console.log('\n  PhoneDrop ' + VERSION + ' is running on ' + HOST + '\n');
+  started();
+  console.log('\n  PhoneDrop ' + VERSION + ' is running on ' + HOST + (LOADED ? ' (quick update)' : '') + (TEST ? ' — TEST MODE, files in ' + BASE : '') + '\n');
   const updated = justUpdated();
   clearOld(updated);
   console.log('  Open on this computer : http://localhost:' + HTTP_PORT);
@@ -700,7 +946,7 @@ httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
   ensureShortcut();
   refreshNet(true).catch(() => {}).then(() => { startHttps(); setInterval(watchNet, 4000); });
   if (UPDATES) {
-    setTimeout(() => { removeOldInstallers(); checkUpdate(); }, 10000);
+    setTimeout(() => { removeOldFiles(); checkUpdate(); }, TEST ? 1500 : 10000);
     setInterval(checkUpdate, 6 * 3600000);
   }
 });
@@ -754,3 +1000,14 @@ function startHttps() {
     printLinks();
   }
 }
+
+// test mode's controls (testmode.js) work through these
+if (TEST) T.attach({
+  REPO, BASE, DIR, VERSION, BUILD, uniqueName, bump, isLocal, devList, watchNet, netInfo, checkUpdate, updateInfo, clearAll,
+  resetUpdate() { update = null; sendLocal('update', null); },
+  addFakePhone(id, name) { devices.set(id, { id, name, conns: 1, fake: true, gone: null }); sendAll('devices', devList()); },
+  removeFakePhone(id) {
+    for (const d of [...devices.values()]) if (d.fake && (id === null || d.id === id)) devices.delete(d.id);
+    sendAll('devices', devList());
+  },
+});
