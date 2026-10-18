@@ -6,4 +6,6 @@
 
 Then drop in photos or videos and scan the QR code with your phone (same Wi-Fi). On iPhone, tap **Save all to Photos**.
 
+Already have PhoneDrop? It updates itself: when it says a new version is available, click **Update now**.
+
 Full instructions and help: [README](https://github.com/dhairyakhetan/PhoneDrop#readme). PhoneDrop-Setup.exe.sha256 holds the installer's SHA-256 checksum.
