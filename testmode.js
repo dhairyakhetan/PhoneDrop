@@ -31,6 +31,10 @@
                                 the installer is used) | 'broken' (crashes on start) | 'hang' (never starts);
                                 leave it out for a release with only the installer
                                 uac: yes | no | fail | noreopen (what the Windows prompt / installer does)
+      POST /api/test/setup      {firewall, old, uac}   the Windows setup PhoneDrop finds (checked again at once):
+                                firewall: ok | off | missing | partial | blocked (what Windows Firewall does to phones),
+                                old: true = PhoneDrop 1.x still in Program Files, uac: yes | no | fail (what
+                                "Finish setup" gets: Yes fixes both, No = cancelled, fail = Windows changed nothing)
       POST /api/test/samples    {photos, photoMB, big, files}   add generated photos (PNG, photoMB big each), a big
                                 video-like file (MB) and small files
       GET  /api/test/stats      requests, bytes sent, downloads cut, Range requests, …   POST /api/test/reset
@@ -71,8 +75,18 @@ function freshStats() { return { requests: 0, downloads: 0, bytesSent: 0, cut: 0
 const T = {
   net: null, throttle: 0, cut: null, diskFull: false, grace: 8000, release: null, stats: freshStats(), S: null,
   upCut: null, upFull: 0, partIdle: 3600000,
+  setup: { firewall: 'ok', old: false, uac: 'yes' },
   attach(S) { T.S = S; },
 };
+
+// the Windows setup (firewall, PhoneDrop 1.x in Program Files) as finish-setup.ps1 would report it, and its
+// Windows prompt for "Finish setup"
+T.setupCheck = () => ({ firewall: T.setup.firewall, old: T.setup.old ? 'C:\\Program Files\\PhoneDrop' : '' });
+T.finishSetup = (ended) => setTimeout(() => {
+  if (T.setup.uac === 'no') return ended(1223);
+  if (T.setup.uac === 'fail') return ended(2);
+  T.setup.firewall = 'ok'; T.setup.old = false; ended(0);
+}, 400);
 
 // the counters, + partial uploads waiting in the shared folder
 function stats() { return Object.assign({ partials: fs.readdirSync(T.S.DIR).filter((n) => n.startsWith('.up-')).length }, T.stats); }
@@ -259,7 +273,7 @@ T.route = async function (req, res, p) {
   switch (p) {
     case '/api/test': return out(200, { net: T.net ? T.net.preset : 'real', presets: ['real'].concat(Object.keys(NETS)), throttle: T.throttle, cut: T.cut,
       diskFull: T.diskFull, grace: T.grace, release: T.release, phones: S.devList(), paired: S.phoneList(), requests: S.requestList(), pair: S.pairInfo(),
-      stats: stats(), version: S.VERSION, data: S.BASE, pid: process.pid });
+      stats: stats(), version: S.VERSION, data: S.BASE, pid: process.pid, setup: T.setup });
     case '/api/test/stats': return out(200, stats());
     case '/api/test/net': {
       if (b.preset && b.preset !== 'real' && !NETS[b.preset]) return out(400, { error: 'unknown preset', presets: ['real'].concat(Object.keys(NETS)) });
@@ -300,11 +314,17 @@ T.route = async function (req, res, p) {
       T.release = b.version ? Object.assign({ size: 3 * 1048576, uac: 'yes' }, b) : null;
       if (!b.quiet) { S.resetUpdate(); if (T.release) await S.checkUpdate(); }
       return out(200, { release: T.release, update: S.updateInfo() });
+    case '/api/test/setup':
+      if (b.firewall && !['ok', 'off', 'missing', 'partial', 'blocked', 'unknown'].includes(b.firewall)) return out(400, { error: 'firewall: ok, off, missing, partial, blocked or unknown' });
+      if (b.uac && !['yes', 'no', 'fail'].includes(b.uac)) return out(400, { error: 'uac: yes, no or fail' });
+      Object.assign(T.setup, b.firewall ? { firewall: b.firewall } : {}, 'old' in b ? { old: !!b.old } : {}, b.uac ? { uac: b.uac } : {});
+      await S.resetSetup();
+      return out(200, { setup: T.setup, info: S.setupInfo() });
     case '/api/test/samples': return out(200, { added: addSamples(b) });
     case '/api/test/quit': out(200, { ok: true }); return setTimeout(() => process.exit(0), 100);
     case '/api/test/reset':
       T.net = null; T.throttle = 0; T.cut = null; T.diskFull = false; T.grace = 8000; T.release = null; T.stats = freshStats();
-      T.upCut = null; T.upFull = 0; T.partIdle = 3600000;
+      T.upCut = null; T.upFull = 0; T.partIdle = 3600000; T.setup = { firewall: 'ok', old: false, uac: 'yes' }; await S.resetSetup();
       for (const n of fs.readdirSync(S.DIR)) if (n.startsWith('.up-')) fs.rmSync(path.join(S.DIR, n), { force: true });
       S.resetUpdate(); S.removeFakePhone(null); S.clearRequests(); S.clearAll(); await S.watchNet(true);
       return out(200, { ok: true });

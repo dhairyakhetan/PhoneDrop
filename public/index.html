@@ -530,6 +530,13 @@ body.unpaired .wrap,body.unpaired #dock,body.unpaired #selBtn,body.unpaired #pho
     <button class="btn primary" id="updGo">Update now</button>
   </section>
 
+  <section class="card upd desk-only" id="setup" hidden>
+    <div class="u-ic" id="setupIc"></div>
+    <div class="u-t"><b id="setupT"></b><span id="setupS"></span></div>
+    <button class="btn" id="setupLater">Later</button>
+    <button class="btn primary" id="setupGo">Finish setup</button>
+  </section>
+
   <section class="hero desk-only" id="hero">
     <div class="card connect" id="connect">
       <div class="qr"><img id="qr" alt="QR code to open PhoneDrop on your phone"><div class="qr-off" id="qrOff"></div></div>
@@ -702,7 +709,8 @@ var IC = {
   phone: '<svg class="i" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18h2"/></svg>',
   text: '<svg class="i" viewBox="0 0 24 24"><path d="M5 6h14M5 11h14M5 16h9"/></svg>',
   link: '<svg class="i" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg>',
-  spin: '<svg class="i" viewBox="0 0 24 24" style="animation:sp 1s linear infinite"><path d="M12 3a9 9 0 1 0 9 9"/></svg>'
+  spin: '<svg class="i" viewBox="0 0 24 24" style="animation:sp 1s linear infinite"><path d="M12 3a9 9 0 1 0 9 9"/></svg>',
+  shield: '<svg class="i" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>'
 };
 var st = document.createElement('style'); st.textContent = '@keyframes sp{to{transform:rotate(360deg)}}'; document.head.appendChild(st);
 
@@ -797,7 +805,7 @@ function showHelp(){
     '<li>No Wi-Fi, or guest, hotel or office Wi-Fi (those often block devices from seeing each other)? Use your <b>phone’s hotspot</b>: turn it on, connect this computer to it, then scan the new code here. PhoneDrop switches by itself.</li>' +
     '<li>iPhone says “not private”? Tap <b>Show Details → visit this website</b>. That’s expected for your own computer.</li>' +
     '<li>Was it removed on the computer, or is the computer on a different network now? Scan the QR code again.</li>' +
-    '<li>Page won’t load at all? Windows Firewall may be blocking it. Search Windows for <b>Allow an app through Windows Firewall</b>, find <b>PhoneDrop</b> (or <b>Node.js</b>) and tick both <b>Private</b> and <b>Public</b>.</li>' +
+    '<li>Page won’t load at all? Windows Firewall may be blocking it. If PhoneDrop on the computer shows <b>Finish setup</b>, click it (Windows asks for admin once). Or search Windows for <b>Allow an app through Windows Firewall</b>, find <b>PhoneDrop</b> (or <b>Node.js</b>) and tick both <b>Private</b> and <b>Public</b>.</li>' +
     '</ul>' });
 }
 
@@ -870,7 +878,7 @@ function boot(){
     showLink();
     renderChrome();
     renderPairing();
-    setUpdate(i.update);
+    setUpdate(i.update); setSetup(i.setup);
     if (isIOS && !window.isSecureContext && i.https) {
       $('secure').hidden = false;
       $('secureGo').href = 'https://' + location.hostname + ':' + i.https.split(':').pop() + '/';
@@ -1059,6 +1067,7 @@ function listen(){
   });
   es.addEventListener('net', function(e){ try { applyNet(JSON.parse(e.data)); } catch (x) {} });
   es.addEventListener('update', function(e){ try { setUpdate(JSON.parse(e.data)); } catch (x) {} });
+  es.addEventListener('setup', function(e){ try { setSetup(JSON.parse(e.data)); } catch (x) {} });
   es.addEventListener('update-progress', function(e){ try { updProgress(JSON.parse(e.data)); } catch (x) {} });
   // this PC only: the QR code's new pairing code, phones asking to connect, the paired phones
   es.addEventListener('pair', function(e){ try { info.pair = JSON.parse(e.data); showLink(); } catch (x) {} });
@@ -1684,6 +1693,41 @@ setBtn($('textBtn'), IC.text, 'Send text');
 $('textBtn').onclick = function(){ openTextBox(''); };
 $('textSend').onclick = function(){ openTextBox(''); };
 
+/* ================= Windows setup banner (PhoneDrop.exe on this PC: the one admin step) ================= */
+// PhoneDrop installs without admin. Letting phones through Windows Firewall (and removing PhoneDrop 1.x from Program
+// Files) needs it once; the installer asks at the end. If that was answered No, the server finds out at start and
+// this offers it again. Later hides it until PhoneDrop starts again.
+var setupSt = null, setupLater = false, setupWas = '';
+function setSetup(x){
+  if (setupWas === 'working' && x && x.state === 'done') toast('Setup finished · phones can reach PhoneDrop now');
+  setupWas = x ? x.state || '' : '';
+  setupSt = x; renderSetup();
+}
+function renderSetup(){
+  var x = setupSt, s = x ? x.state || '' : '';
+  $('setup').hidden = isMobile || !x || s === 'done' || (setupLater && !s);
+  if ($('setup').hidden) return;
+  var why = [];
+  if (x.firewall === 'blocked') why.push('Windows Firewall is blocking phones from reaching PhoneDrop.');
+  else if (x.firewall === 'missing' || x.firewall === 'partial') why.push('Phones can’t reach PhoneDrop through Windows Firewall' + (x.firewall === 'partial' ? ' on every network' : '') + ' yet.');
+  if (x.old) why.push('An older PhoneDrop is still in Program Files.');
+  var t = 'Finish setup · needs admin once', sub = why.join(' ') + ' Windows asks for permission once; updates never do.', icon = IC.shield;
+  if (s === 'working') { t = 'Finishing setup…'; sub = 'Click Yes when Windows asks to allow changes.'; icon = IC.spin; }
+  else if (s === 'cancelled') { t = 'Setup not finished'; sub = 'Windows needs your permission once. Click Yes when it asks.'; icon = IC.info; }
+  else if (s === 'failed') { t = 'Setup didn’t finish'; sub = 'Something went wrong: ' + (x.error || 'unknown error') + '. Close any other PhoneDrop and try again.'; icon = IC.info; }
+  var ic = $('setupIc'); if (ic._icon !== icon) { ic.innerHTML = icon; ic._icon = icon; }
+  $('setupT').textContent = t; $('setupS').textContent = sub;
+  $('setup').classList.toggle('err', s === 'cancelled' || s === 'failed');
+  $('setupGo').hidden = $('setupLater').hidden = s === 'working';
+  $('setupGo').textContent = s === 'cancelled' || s === 'failed' ? 'Try again' : 'Finish setup';
+}
+$('setupGo').onclick = function(){
+  setSetup(Object.assign({}, setupSt, { state: 'working' }));
+  fetch('/api/setup/finish', { method: 'POST' }).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); })
+    .catch(function(){ toast('Couldn’t start it'); setSetup(Object.assign({}, setupSt, { state: '' })); });
+};
+$('setupLater').onclick = function(){ setupLater = true; renderSetup(); };
+
 /* ================= update banner (installed PhoneDrop, on this PC only) ================= */
 // The server checks GitHub for a newer stable release and tells this page (never phones) via /api/info and SSE.
 var upd = null, updGot = 0, updMeter = new Meter(), updPoll = 0, updDown = 0, updStuck = false;
@@ -1731,9 +1775,9 @@ function renderUpdate(){
     t = 'Downloading update… ' + pct + '%';
     sub = joinDot(fmt(updGot) + ' of ' + fmt(total), fmtLeft(updMeter.left(total - updGot)));
     $('updF').style.width = pct + '%';
-  } else if (s === 'installing') { t = 'Installing PhoneDrop ' + upd.version + '…'; sub = 'Click Yes if Windows asks to allow changes. PhoneDrop reopens by itself.'; }
+  } else if (s === 'installing') { t = 'Installing PhoneDrop ' + upd.version + '…'; sub = 'PhoneDrop closes and reopens by itself in a few seconds.'; }
   else if (s === 'restarting') { t = upd.quick ? 'Restarting into PhoneDrop ' + upd.version + '…' : 'Installing… PhoneDrop will reopen'; sub = 'This takes a few seconds.'; }
-  else if (s === 'cancelled') { t = 'Update cancelled'; sub = 'Windows needs your permission to install it. Click Yes when it asks.'; }
+  else if (s === 'cancelled') { t = 'Update cancelled'; sub = 'The installer didn’t run. Try again, and click Yes if Windows asks.'; }
   else if (s === 'failed') { t = 'Update failed'; sub = 'Something went wrong: ' + (upd.error || 'unknown error') + '.'; }
   else { t = 'PhoneDrop ' + upd.version + ' is available'; sub = (info ? 'You have ' + info.version + '. ' : '') +
     (upd.quick ? 'Quick update (' + fmt(upd.size || 0) + '): takes a few seconds, no installer.' : 'Updating takes about a minute.'); }
@@ -2442,6 +2486,10 @@ if (window.PD_TEST) (function(){
           b_('cut', 'Cut the next 3 at 1 MB') + '</div>' +
         '<h4>Uploads (in parts)</h4><div class="trow">' + b_('upcut', 'Cut the next 3 at 1 MB') + b_('upfull', 'Disk fills up after 5 MB') +
           '<label><input type="checkbox" id="tDisk"' + (t.diskFull ? ' checked' : '') + '> disk full</label></div>' +
+        '<h4>Windows setup (firewall, PhoneDrop 1.x)</h4><div class="trow">' +
+          sel_('tFw', [['ok', 'firewall lets phones in'], ['missing', 'no firewall rule'], ['partial', 'rule for some networks'], ['blocked', 'firewall blocks phones'], ['off', 'firewall off']], t.setup.firewall) +
+          '<label><input type="checkbox" id="tOld"' + (t.setup.old ? ' checked' : '') + '> 1.x in Program Files</label>' +
+          sel_('tSetupUac', [['yes', 'Windows prompt: Yes'], ['no', 'Windows prompt: No'], ['fail', 'changes nothing']], t.setup.uac) + '</div>' +
         '<h4>Add files</h4><div class="trow">' + b_('photos', '+ 6 photos') + b_('docs', '+ 3 files') + b_('big', '+ 400 MB video') + '</div>' +
         '<h4>Pretend GitHub release</h4><div class="trow"><input type="text" id="tVer" value="' + esc(r.version || v.join('.')) + '">' +
           sel_('tQuick', [['quick', 'quick update'], ['', 'installer only'], ['other', 'quick, for another exe'], ['broken', 'quick, crashes'], ['hang', 'quick, never starts']], r.version ? (r.quick === true ? 'quick' : r.quick || '') : 'quick') +
@@ -2466,6 +2514,9 @@ if (window.PD_TEST) (function(){
     if (id === 'tNet') api('/net', { preset: e.target.value }).then(function(){ toast('Network: ' + e.target.value); });
     if (id === 'tThr') api('/throttle', { bps: +e.target.value });
     if (id === 'tDisk') api('/faults', { diskFull: e.target.checked });
+    if (id === 'tFw') api('/setup', { firewall: e.target.value });
+    if (id === 'tOld') api('/setup', { old: e.target.checked });
+    if (id === 'tSetupUac') api('/setup', { uac: e.target.value });
   });
   pn.addEventListener('click', function(e){
     var b = e.target.closest('button[data-a]'); if (!b) return;

@@ -16,12 +16,14 @@ Send photos, videos and files between your Windows PC and your phone over Wi-Fi,
 ## Install (Windows)
 
 1. Download **PhoneDrop-Setup.exe** from the [latest release](https://github.com/dhairyakhetan/PhoneDrop/releases/latest/download/PhoneDrop-Setup.exe).
-2. Run it. Windows may say "Windows protected your PC": click **More info → Run anyway** (the app isn't code-signed). Click **Yes** on the admin prompt.
-3. Follow the wizard and tick **Open PhoneDrop now**.
+2. Run it. Windows may say "Windows protected your PC": click **More info → Run anyway** (the app isn't code-signed).
+3. Follow the wizard and tick **Open PhoneDrop now**. At the end, Windows asks **once** to allow changes: click **Yes**. That lets phones through Windows Firewall.
+
+PhoneDrop installs just for you, in your own folder (`%LOCALAPPDATA%\Programs\PhoneDrop`), so it needs no admin rights and **updates never ask for permission**. The one admin step is that firewall question. Said No, or don't have admin? PhoneDrop installs anyway and shows **Finish setup · needs admin once** until someone clicks it (with admin). Coming from PhoneDrop 1.x (installed in Program Files)? The update moves PhoneDrop to your own folder: click **Yes** when Windows asks, and the old copy is removed.
 
 PhoneDrop is then in the Start Menu. To remove it: Settings → Apps → Installed apps → PhoneDrop → Uninstall.
 
-**Updates:** PhoneDrop checks for new versions by itself. When it says **PhoneDrop x.y.z is available**, click **Update now**. Most updates are quick: only the changed app (about 100 KB) is downloaded and PhoneDrop restarts on it in a few seconds, without the installer. When an update needs the installer, Windows asks for permission once and PhoneDrop reopens on the new version a few seconds later. If several versions came out, you get the newest straight away.
+**Updates:** PhoneDrop checks for new versions by itself. When it says **PhoneDrop x.y.z is available**, click **Update now**. Most updates are quick: only the changed app (about 100 KB) is downloaded and PhoneDrop restarts on it in a few seconds, without the installer. When an update needs the installer, it runs by itself in the background (no Windows prompt) and PhoneDrop reopens on the new version a few seconds later. If several versions came out, you get the newest straight away.
 
 ## Use it
 
@@ -32,7 +34,7 @@ PhoneDrop is then in the Start Menu. To remove it: Settings → Apps → Install
 
 Closing the PhoneDrop window stops it. Files are cleared the next time it starts.
 
-**Phone can't connect?** Is the phone on the Wi-Fi the PC names? Guest/hotel/office Wi-Fi often blocks devices from seeing each other: turn on your phone's hotspot and connect the PC to it instead. If Windows Firewall blocks it, search "Allow an app through Windows Firewall" and tick PhoneDrop for Private and Public.
+**Phone can't connect?** Is the phone on the Wi-Fi the PC names? Guest/hotel/office Wi-Fi often blocks devices from seeing each other: turn on your phone's hotspot and connect the PC to it instead. If PhoneDrop shows **Finish setup**, click it (Windows Firewall is keeping phones out). Or search "Allow an app through Windows Firewall" and tick PhoneDrop for Private and Public.
 
 ## Run from source
 
@@ -84,7 +86,7 @@ testmode.js          test mode (npm run test-mode)
 test/                automated tests (npm test)
 vendor/qrcode.js     QR code generator (MIT)
 assets/              Windows icon
-installer/           installer wizard script and artwork (NSIS), taskbar helper
+installer/           installer wizard script and artwork (NSIS), taskbar helper, the one admin step (firewall)
 scripts/build.mjs    builds the .exe, the installer and the quick update
 scripts/quick-update.js  what goes into a quick update
 .github/workflows/   builds the installer when a release is published

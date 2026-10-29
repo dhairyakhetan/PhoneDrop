@@ -411,6 +411,7 @@ test('layouts: no sideways scrolling at any size, dark and light', async () => {
   await reset();
   await samples({ photos: 7, files: 2 });
   await upload(s.url, 'A very long file name that goes on and on and on for quite a while.pdf', randomFile(100));
+  await s.api('/api/test/setup', { firewall: 'partial', old: true }); // the PC shows "Finish setup" too
   const b = await browser();
   const sizes = [
     ['pc', 1920, 1080], ['pc', 1440, 900], ['pc', 1280, 800], ['pc', 1024, 768], ['pc', 820, 900], ['pc', 640, 800], ['pc', 480, 800],
@@ -425,6 +426,7 @@ test('layouts: no sideways scrolling at any size, dark and light', async () => {
       const errs = []; p.on('pageerror', (e) => errs.push(e.message));
       await p.goto(s.url + (phone ? '/#p=' + (await s.pairCode()) : ''));
       await p.waitForFunction(() => document.querySelectorAll('#grid .tile').length === 10);
+      if (!phone) await p.waitForSelector('#setup:not([hidden])');
       await sleep(150);
       const over = await p.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert.ok(over <= 0, kind + ' ' + w + '×' + h + ' ' + scheme + ': ' + over + ' px sideways scroll');
@@ -909,5 +911,36 @@ test('phone → PC: the computer’s disk fills up part way: says so straight aw
   assert.equal(st.partials, 0);
   assert.ok(st.upBytes < 9 * 1048576, 'stopped, no retries: ' + st.upBytes);
   assert.deepEqual((await s.api('/api/files')).body, []);
+  await closeAll();
+});
+
+test('Windows setup: "Finish setup · needs admin once"; No says so and Try again; Yes finishes; phones never see it', async () => {
+  await reset();
+  await s.api('/api/test/setup', { firewall: 'blocked', old: true, uac: 'no' });
+  const pc = await open('pc');
+  await pc.waitForSelector('#setup:not([hidden])');
+  assert.equal(await text(pc, '#setupT'), 'Finish setup · needs admin once');
+  assert.match(await text(pc, '#setupS'), /Windows Firewall is blocking phones from reaching PhoneDrop\. An older PhoneDrop is still in Program Files\. Windows asks for permission once; updates never do\./);
+  await pc.click('#setupGo');
+  await waitFor(async () => (await text(pc, '#setupT')) === 'Finishing setup…', 3000, 'working');
+  assert.match(await text(pc, '#setupS'), /Click Yes when Windows asks/);
+  await waitFor(async () => (await text(pc, '#setupT')) === 'Setup not finished', 5000, 'cancelled');
+  assert.equal(await text(pc, '#setupGo'), 'Try again');
+  assert.equal(await pc.$eval('#setup', (e) => e.classList.contains('err')), true);
+  await s.api('/api/test/setup', { uac: 'yes' });
+  await pc.click('#setupGo');
+  await pc.waitForSelector('#setup[hidden]', { state: 'attached', timeout: 5000 });
+  await waitFor(async () => /Setup finished/.test(await text(pc, '#toast')), 3000, 'the toast');
+  // a phone never hears about it
+  await s.api('/api/test/setup', { firewall: 'missing' });
+  const an = await open('android');
+  await an.waitForSelector('#dock:not([hidden])');
+  assert.equal(await an.$eval('#setup', (e) => e.hidden), true);
+  // Later hides it until the next start
+  await pc.reload();
+  await pc.waitForSelector('#setup:not([hidden])');
+  assert.match(await text(pc, '#setupS'), /^Phones can’t reach PhoneDrop through Windows Firewall yet\./);
+  await pc.click('#setupLater');
+  assert.equal(await pc.$eval('#setup', (e) => e.hidden), true);
   await closeAll();
 });

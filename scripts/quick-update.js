@@ -24,6 +24,7 @@ const ASSETS = [
   'public/manifest.json',
   'vendor/qrcode.js',
   'installer/appid.ps1', // PhoneDrop.exe labels its window with it (Windows taskbar icon)
+  'installer/finish-setup.ps1', // the one admin step (firewall, PhoneDrop 1.x): checked at start, "Finish setup" runs it
 ];
 // what <base> is made of, besides APP_FORMAT and Node's major version
 const BASE_FILES = ['installer/installer.nsi', 'installer/wizard.bmp', 'installer/header.bmp', 'assets/PhoneDrop.ico'];

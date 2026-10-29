@@ -672,13 +672,18 @@ function handler(req, res) {
   if (req.method === 'GET' && p === '/api/info') {
     const info = { host: HOST, version: VERSION, test: TEST, paired: pc || !!phone, httpPort: HTTP_PORT };
     if (!pc && !phone) return json(res, 200, info); // not paired: just enough for the pairing screen
-    return json(res, 200, Object.assign(info, { app: APP, update: pc ? updateInfo() : null }, netInfo(),
+    return json(res, 200, Object.assign(info, { app: APP, update: pc ? updateInfo() : null, setup: pc ? setupInfo() : null }, netInfo(),
       pc ? { pair: pairInfo(), requests: requestList(), phones: phoneList() } : { name: phone.name }));
   }
   if (req.method === 'POST' && p === '/api/pair') return readJSON(req, (b) => (b ? pairPhone(req, res, b) : json(res, 400, { error: 'bad request' })));
   // only from PhoneDrop's own page on this computer: not phones on the Wi-Fi, not other websites open in a browser here
-  if (req.method === 'POST' && ['/api/update/install', '/api/pair/allow', '/api/pair/block', '/api/phones/remove'].includes(p)) {
+  if (req.method === 'POST' && ['/api/update/install', '/api/setup/finish', '/api/pair/allow', '/api/pair/block', '/api/phones/remove'].includes(p)) {
     if (!pc) return json(res, 403, { error: 'only from this computer' });
+    if (p === '/api/setup/finish') {
+      if (!setupNeeded() && !(setup && setup.state === 'working')) return json(res, 404, { error: 'nothing to finish' });
+      finishSetup();
+      return json(res, 200, { ok: true });
+    }
     if (p === '/api/update/install') {
       if (!update) return json(res, 404, { error: 'no update' });
       if (!update.state || update.state === 'failed' || update.state === 'cancelled') installUpdate();
@@ -744,6 +749,7 @@ function handler(req, res) {
     }
     res.write('event: devices\ndata: ' + JSON.stringify(devList()) + '\n\n');
     if (local && update) res.write('event: update\ndata: ' + JSON.stringify(updateInfo()) + '\n\n');
+    if (local && setupInfo()) res.write('event: setup\ndata: ' + JSON.stringify(setupInfo()) + '\n\n');
     if (phone) sendLocal('phones', phoneList());
     req.on('close', () => { if (res.pid) setTimeout(() => sendLocal('phones', phoneList()), 50); });
     if (local) { localClients++; sawLocal = true; }
@@ -949,6 +955,73 @@ function labelWindow() {
   } catch (e) {}
 }
 
+// ---------- Windows setup: the one admin step ----------
+// PhoneDrop installs for this user only, so installing and updating never need admin. Two things do, once: letting
+// phones through Windows Firewall, and removing PhoneDrop 1.x from Program Files (installer/finish-setup.ps1). The
+// installer does that at the end of the first install, with one Windows prompt. If the answer was No, this check
+// (at start, Windows exe only) finds it, and the page on this PC shows "Finish setup · needs admin once"; its button
+// runs the same script, elevated.
+// setup = { firewall: ok|off|missing|partial|blocked|unknown, old: '<1.x folder>' | '', state: '' | working | done |
+//   cancelled | failed, error }
+let setup = null;
+const SETUP_ON = (IS_EXE && process.platform === 'win32') || TEST;
+function setupNeeded() { return !!setup && (['missing', 'partial', 'blocked'].includes(setup.firewall) || !!setup.old); }
+function setupInfo() {
+  return setup && (setupNeeded() || setup.state) ? { firewall: setup.firewall, old: setup.old, state: setup.state, error: setup.error } : null;
+}
+// finish-setup.ps1 for `powershell -EncodedCommand` (PhoneDrop.exe carries it, see ASSETS)
+function setupScript(mode) {
+  return Buffer.from('& {\n' + asset('installer/finish-setup.ps1', 'utf8') + '\n} -Mode ' + mode + ' -Exe ' + psq(process.execPath), 'utf16le').toString('base64');
+}
+// does Windows Firewall let phones in, and is PhoneDrop 1.x still in Program Files? (reading needs no admin)
+function checkSetup() {
+  if (!SETUP_ON) return Promise.resolve();
+  const done = (r) => {
+    if (!r) return;
+    setup = Object.assign(setup || { state: '', error: '' }, { firewall: String(r.firewall || 'unknown'), old: String(r.old || '') });
+    if (setup.state === 'cancelled' || setup.state === 'failed') { if (!setupNeeded()) setup.state = ''; }
+    sendLocal('setup', setupInfo());
+  };
+  if (TEST) return Promise.resolve(done(T.setupCheck()));
+  return new Promise((ok) => {
+    let out = '';
+    try {
+      const c = spawn('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', setupScript('check')],
+        { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+      c.stdout.on('data', (d) => { out += d; });
+      c.on('error', () => ok());
+      c.on('close', () => { try { done(JSON.parse(out.trim().split(/\r?\n/).pop())); } catch (e) {} ok(); });
+    } catch (e) { ok(); }
+  });
+}
+// "Finish setup": the script again, elevated. Start-Process -Verb RunAs is what shows the Windows prompt (only the
+// shell can); No -> 1223 (cancelled). It runs as whoever clicked Yes, so this user's SetupDone mark (the
+// uninstaller reads it) is written out here, not by the elevated script.
+function finishSetup() {
+  if (!setup || setup.state === 'working') return;
+  setup.state = 'working'; setup.error = '';
+  sendLocal('setup', setupInfo());
+  const ended = (code) => {
+    if (code === 0) return checkSetup().then(() => {
+      setup.state = setupNeeded() ? 'failed' : 'done';
+      if (setup.state === 'failed') setup.error = 'Windows didn’t let it change everything';
+      sendLocal('setup', setupInfo());
+    });
+    setup.state = code === 1223 ? 'cancelled' : 'failed';
+    setup.error = code === 1223 ? '' : code === 2 ? 'Windows didn’t let it change everything' : 'it didn’t start';
+    sendLocal('setup', setupInfo());
+  };
+  if (TEST) return T.finishSetup(ended);
+  const ps = "try { $p = Start-Process -FilePath powershell -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand','" +
+    setupScript('finish') + "' } catch { exit 1223 }; " +
+    "if ($p.ExitCode -eq 0) { & reg.exe add 'HKCU\\Software\\PhoneDrop' /v SetupDone /t REG_SZ /d " + psq(process.execPath) + ' /f | Out-Null }; exit $p.ExitCode';
+  try {
+    const c = spawn('powershell', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', ps], { windowsHide: true, stdio: 'ignore' });
+    c.on('error', () => ended(-1));
+    c.on('exit', (code) => ended(code));
+  } catch (e) { ended(-1); }
+}
+
 // ---------- in-app updates (installed PhoneDrop.exe only, never `node server.js`) ----------
 // Asks GitHub for the newest *stable* release: /releases/latest skips pre-releases and drafts, and versions in
 // between are skipped (it's checked again right before installing). The page on this PC then shows
@@ -1093,9 +1166,10 @@ async function installUpdate() {
     return sendLocal('update', updateInfo());
   }
   // Hand over to a small hidden PowerShell helper that outlives PhoneDrop:
-  // - it runs the installer with Start-Process, not spawn(): the installer needs admin, and only the shell can show
-  //   Windows' "allow changes?" prompt. Answered No -> it exits 1 and PhoneDrop carries on ("cancelled").
-  // - Yes -> it writes updated.txt (our cue to step aside; the installer closes PhoneDrop anyway) and waits for the
+  // - it runs the installer with Start-Process. The installer is per-user (no admin, no Windows prompt), but an
+  //   installer that does ask (PhoneDrop 1.x's, or a PC set to always ask) only gets its prompt through the shell,
+  //   not spawn(). Answered No -> it exits 1 and PhoneDrop carries on ("cancelled").
+  // - started -> it writes updated.txt (our cue to step aside; the installer closes PhoneDrop anyway) and waits for the
   //   installer, which reopens PhoneDrop. If PhoneDrop still isn't running 10 s after the installer finished, the
   //   helper starts it (as this user, not as admin). Each update adds a line to update-log.txt, so if one ever goes
   //   wrong there's something to look at.
@@ -1245,6 +1319,7 @@ httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
   if (APP && updated) setTimeout(() => { if (!sawLocal) openWindow(); }, 5000);
   else if (APP) openWindow();
   ensureShortcut();
+  setTimeout(checkSetup, TEST ? 0 : 3000); // the firewall, and PhoneDrop 1.x in Program Files: is the admin step done?
   refreshNet(true).catch(() => {}).then(() => { startHttps(); setInterval(watchNet, 4000); });
   if (UPDATES) {
     setTimeout(() => { removeOldFiles(); checkUpdate(); }, TEST ? 1500 : 10000);
@@ -1305,6 +1380,7 @@ function startHttps() {
 // test mode's controls (testmode.js) work through these
 if (TEST) T.attach({
   REPO, BASE, DIR, VERSION, BUILD, uniqueName, bump, isLocal: isPC, devList, watchNet, netInfo, checkUpdate, updateInfo, clearAll,
+  checkSetup, setupInfo, resetSetup() { setup = null; return checkSetup(); },
   rotateCode, pairInfo, requestList, phoneList, answerRequest, removePhone,
   setPairLife(ms) { pairLife = ms; rotateCode(); },
   setRequestLife(ms) { REQUEST_LIFE = ms; },
