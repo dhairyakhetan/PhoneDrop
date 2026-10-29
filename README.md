@@ -7,6 +7,7 @@ Send photos, videos and files between your Windows PC and your phone over Wi-Fi,
 - No shared Wi-Fi? Turn on your **phone's hotspot** and connect the PC to it. PhoneDrop notices and updates the QR code by itself.
 - The PC tells you which Wi-Fi your phone should join.
 - Works the other way too: send files from your phone, then **Download from phone** on the PC. They count as transferred once they're on the PC.
+- Whole folders too: drop a folder on the PC and choose **Zip and send** (one .zip with its subfolders, every photo inside untouched) or **Send contents individually** (the files directly inside, so photos show up for Save to Photos).
 - Text and links too: **Send text** on either side (or just Ctrl+V some text on the PC). It shows up as a note with **Copy**, and **Open link** for a link.
 - Big videos work too, with progress, speed and time left. A download or upload cut off by a Wi-Fi hiccup or a locked screen carries on by itself where it stopped.
 - Pick photos with long-press + slide like the Photos app.

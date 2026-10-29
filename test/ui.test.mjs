@@ -4,7 +4,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startServer, browser, browserWith, closeBrowser, waitFor, sleep, sha, IOS_UA, ANDROID_UA, upload, randomFile } from './helpers.mjs';
+import { startServer, browser, browserWith, closeBrowser, waitFor, sleep, sha, IOS_UA, ANDROID_UA, upload, randomFile, tmpDir, readZip, pythonZip } from './helpers.mjs';
 
 let s;
 before(async () => { s = await startServer(); await browser(); });
@@ -645,5 +645,150 @@ test('notes: never part of Save to Photos or Save to phone', async () => {
   await ip.click('#save');
   await ip.waitForFunction(() => window.__shared.length === 1);
   assert.deepEqual(await ip.evaluate(() => window.__shared.map((x) => x.name)), ['Sample 01.png']);
+  await closeAll();
+});
+
+// drop files and folders from disk on the page, the way Explorer does it (folders arrive as directory entries)
+async function dropPaths(page, paths) {
+  const cdp = await page.context().newCDPSession(page);
+  const data = { items: [], files: paths, dragOperationsMask: 1 };
+  for (const type of ['dragEnter', 'dragOver', 'drop']) await cdp.send('Input.dispatchDragEvent', { type, x: 150, y: 300, data });
+  // (the session stays: detaching it right away can end the drag before the page has read the folder)
+}
+// a folder on disk: { dir, files: { 'Holiday/...': bytes } } (system files go in too: they must never be sent)
+function folder(name, list) {
+  const root = tmpDir('folder'), files = {};
+  for (const [p, b] of Object.entries(list)) {
+    const f = path.join(root, name, p);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, b);
+    if (!/^(desktop\.ini|thumbs\.db|\.ds_store)$/i.test(path.basename(p))) files[name + '/' + p] = b;
+  }
+  return { dir: path.join(root, name), files };
+}
+const holiday = () => folder('Holiday', {
+  'IMG_0001.jpg': randomFile(400000), 'notes.txt': Buffer.from('packing list\n'),
+  'Strand 🏖/写真 über.jpg': randomFile(250000), 'Strand 🏖/Videos/clip.mov': randomFile(600000),
+  'desktop.ini': Buffer.from('[.ShellClassInfo]'), 'Thumbs.db': Buffer.from('thumbs'), '.DS_Store': Buffer.from('mac'), 'Strand 🏖/.DS_Store': Buffer.from('mac'),
+});
+const names = async () => (await s.api('/api/files')).body.map((f) => f.name).sort();
+// the zip PhoneDrop received: every file in it matches the folder's, and nothing else is in it
+function checkZip(name, f, dirs) {
+  const file = path.join(s.data, 'shared', name), list = readZip(file);
+  assert.deepEqual(list.filter((e) => e.dir).map((e) => e.name).sort(), dirs.sort(), 'the folders');
+  assert.deepEqual(list.filter((e) => !e.dir).map((e) => e.name).sort(), Object.keys(f.files).sort(), 'the files (no system files)');
+  for (const e of list) if (!e.dir) { assert.equal(e.method, 0, 'stored'); assert.equal(sha(e.read()), sha(f.files[e.name]), e.name); }
+  const py = pythonZip(file);
+  if (py) for (const [n, b] of Object.entries(f.files)) assert.equal(py.sha[n], sha(b), 'Python zipfile: ' + n);
+}
+
+test('folders: a dropped folder asks first; Zip and send makes Holiday.zip, subfolders kept, files identical, no system files', async () => {
+  await reset();
+  const h = holiday();
+  const pc = await open('pc');
+  await dropPaths(pc, [h.dir]);
+  await pc.waitForSelector('#modal:not([hidden])');
+  assert.equal(await text(pc, '#mT'), 'Send “Holiday”?');
+  const p = await text(pc, '#mP');
+  assert.match(p, /^4 files · [\d.]+ MB · 2 subfolders/);
+  assert.match(p, /the 2 files directly inside, straight away\. Skips the 2 subfolders\./);
+  assert.match(p, /A zip is one file \(phones put it in Files\)\. Sending individually makes photos show up for Save to Photos\./);
+  assert.deepEqual(await pc.$$eval('#mRow button', (b) => b.map((x) => x.textContent.trim())), ['Cancel', 'Send 2 files individually', 'Zip and send']);
+  await pc.click('#mRow .primary');
+  await waitFor(async () => (await names()).includes('Holiday.zip'), 20000, 'Holiday.zip');
+  await pc.waitForFunction(() => /Sent 1 file/.test(document.getElementById('upT').textContent), null, { timeout: 10000 });
+  assert.deepEqual(await names(), ['Holiday.zip'], 'one zip, nothing else');
+  checkZip('Holiday.zip', h, ['Holiday/', 'Holiday/Strand 🏖/', 'Holiday/Strand 🏖/Videos/']);
+  assert.deepEqual(pc.errors, []);
+  await closeAll();
+});
+
+test('folders: Send contents individually sends only the files directly inside', async () => {
+  await reset();
+  const h = holiday();
+  const pc = await open('pc');
+  await dropPaths(pc, [h.dir]);
+  await pc.waitForSelector('#modal:not([hidden])');
+  await pc.click('#mRow button:has-text("individually")');
+  await waitFor(async () => (await names()).length === 2, 15000, 'the two files');
+  await pc.waitForFunction(() => /Sent 2 files/.test(document.getElementById('upT').textContent), null, { timeout: 10000 });
+  await sleep(500);
+  assert.deepEqual(await names(), ['IMG_0001.jpg', 'notes.txt'], 'no subfolders, no desktop.ini/Thumbs.db/.DS_Store');
+  assert.equal(shaOf('IMG_0001.jpg'), sha(h.files['Holiday/IMG_0001.jpg']));
+  assert.equal(shaOf('notes.txt'), sha(h.files['Holiday/notes.txt']));
+  await closeAll();
+});
+
+test('folders: Cancel sends nothing (a tablet gets the same question); an empty folder says so', async () => {
+  await reset();
+  const h = holiday();
+  const an = await open('android');
+  await an.waitForSelector('#dock:not([hidden])');
+  await dropPaths(an, [h.dir]);
+  await an.waitForSelector('#modal:not([hidden])');
+  assert.equal(await text(an, '#mT'), 'Send “Holiday”?');
+  await an.click('#mRow button:has-text("Cancel")');
+  await sleep(1500);
+  assert.deepEqual(await names(), [], 'nothing sent');
+  assert.equal(await an.$eval('#up', (e) => e.hidden), true);
+  // a folder with only system files in it counts as empty
+  const e = folder('Empty', { 'desktop.ini': Buffer.from('x'), '.DS_Store': Buffer.from('y') });
+  const pc = await open('pc');
+  await dropPaths(pc, [e.dir]);
+  await waitFor(async () => /“Empty” is empty/.test(await text(pc, '#toast')), 5000, 'the empty-folder toast');
+  assert.equal(await pc.$eval('#modal', (m) => m.hidden), true, 'no question');
+  assert.deepEqual(await names(), []);
+  await closeAll();
+});
+
+test('folders: several folders and a file in one drop: the file goes, one question for the folders, one zip each', async () => {
+  await reset();
+  const h = holiday();
+  const f = folder('Ferien 日本 🏖', { 'Strand.jpg': randomFile(123456), 'Tag 2/Notizen für später.txt': Buffer.from('über') });
+  const loose = path.join(tmpDir('loose'), 'loose.txt');
+  fs.writeFileSync(loose, 'on its own');
+  const pc = await open('pc');
+  await dropPaths(pc, [h.dir, f.dir, loose]);
+  await pc.waitForSelector('#modal:not([hidden])');
+  assert.equal(await text(pc, '#mT'), 'Send 2 folders?');
+  assert.match(await text(pc, '#mP'), /^6 files · [\d.]+ MB · 3 subfolders.*one zip per folder/);
+  await waitFor(async () => (await names()).includes('loose.txt'), 10000, 'the loose file, straight away');
+  await pc.click('#mRow .primary');
+  await waitFor(async () => (await names()).length === 3, 20000, 'two zips');
+  assert.deepEqual(await names(), ['Ferien 日本 🏖.zip', 'Holiday.zip', 'loose.txt']);
+  checkZip('Holiday.zip', h, ['Holiday/', 'Holiday/Strand 🏖/', 'Holiday/Strand 🏖/Videos/']);
+  checkZip('Ferien 日本 🏖.zip', f, ['Ferien 日本 🏖/', 'Ferien 日本 🏖/Tag 2/']);
+  await closeAll();
+});
+
+test('folders: a subfolder the browser can’t read is left out and the question says so; ✕ while zipping stops it', async () => {
+  await reset();
+  const pc = await open('pc');
+  // pretend folder entries (what webkitGetAsEntry gives), one of them unreadable, straight into the page's code
+  await pc.evaluate(() => {
+    const file = (name, data) => ({ name, isDirectory: false, file: (ok) => ok(new File([data], name)) });
+    const dir = (name, kids, bad) => ({ name, isDirectory: true, createReader: () => { let done = false; return { readEntries: (ok, no) => (bad ? no(new Error('EncodingError')) : ok(done ? [] : (done = true, kids))) }; } });
+    PD.askFolders([dir('Trip', [file('a.jpg', 'photo'), dir('Locked', [file('x.txt', 'x')], true)])]);
+  });
+  await pc.waitForSelector('#modal:not([hidden])');
+  assert.match(await text(pc, '#mP'), /Couldn’t read “Trip\/Locked”: left out\./);
+  await pc.click('#mRow .primary');
+  await waitFor(async () => (await names()).includes('Trip.zip'), 10000, 'Trip.zip');
+  assert.deepEqual(readZip(path.join(s.data, 'shared', 'Trip.zip')).map((e) => e.name), ['Trip/', 'Trip/a.jpg'], 'no empty Locked/ folder in it');
+  // a folder that takes a while to read: ✕ stops the zipping, nothing is sent
+  await reset();
+  await pc.evaluate(() => {
+    const slow = { name: 'big.mov', size: 50e6, lastModified: Date.now(), slice: (a, b) => ({ arrayBuffer: () => new Promise((r) => setTimeout(() => r(new ArrayBuffer(b - a)), 300)) }) };
+    const dir = { name: 'Slow', isDirectory: true, createReader: () => { let done = false; return { readEntries: (ok) => ok(done ? [] : (done = true, [{ name: 'big.mov', isDirectory: false, file: (ok2) => ok2(slow) }])) }; } };
+    PD.askFolders([dir]);
+  });
+  await pc.waitForSelector('#modal:not([hidden])');
+  await pc.click('#mRow .primary');
+  await waitFor(async () => /Zipping “Slow”…/.test(await text(pc, '#upT')), 5000, 'Zipping “Slow”…');
+  await pc.click('#upX');
+  await waitFor(async () => /Zipping cancelled/.test(await text(pc, '#toast')), 5000, 'Zipping cancelled');
+  await sleep(800);
+  assert.equal(await pc.$eval('#up', (e) => e.hidden), true);
+  assert.deepEqual(await names(), []);
   await closeAll();
 });

@@ -1,6 +1,6 @@
 // Shared bits for the automated tests (npm test). Every test starts its own PhoneDrop in test mode
 // (node server.js --test) on free ports, with its own data folder, so nothing touches your real files.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import http from 'node:http';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -143,7 +143,10 @@ export function events(url, query = '', headers) {
   };
 }
 
-// a browser for the UI tests: Playwright's own Chromium if it's installed, else Edge or Chrome
+// a browser for the UI tests: Playwright's own Chromium if it's installed, else Edge or Chrome.
+// On Linux without a locale (LANG unset, as in many containers) Chromium can't read dropped folders with non-ASCII
+// names (EncodingError), so it gets a UTF-8 one. Windows and macOS don't have that problem.
+const env = () => (process.env.LC_ALL || process.env.LC_CTYPE || process.env.LANG ? process.env : Object.assign({}, process.env, { LANG: 'C.UTF-8' }));
 let browserP = null;
 export function browser() {
   if (!browserP) browserP = (async () => {
@@ -151,7 +154,7 @@ export function browser() {
     const tries = [{}, { channel: 'msedge' }, { channel: 'chrome' }];
     if (process.env.PHONEDROP_BROWSER) tries.unshift({ executablePath: process.env.PHONEDROP_BROWSER });
     let err;
-    for (const t of tries) { try { return await chromium.launch(t); } catch (e) { err = e; } }
+    for (const t of tries) { try { return await chromium.launch(Object.assign({ env: env() }, t)); } catch (e) { err = e; } }
     throw new Error('No browser for the UI tests. Install Edge or Chrome, or set PHONEDROP_BROWSER to a Chromium. (' + err.message.split('\n')[0] + ')');
   })();
   return browserP;
@@ -163,10 +166,60 @@ export async function browserWith(args, direct) {
   const tries = [{}, { channel: 'msedge' }, { channel: 'chrome' }];
   if (process.env.PHONEDROP_BROWSER) tries.unshift({ executablePath: process.env.PHONEDROP_BROWSER });
   const proxy = direct ? { proxy: { server: 'http://127.0.0.1:9', bypass: direct.concat(['localhost', '127.0.0.1']).join(',') } } : {};
-  for (const t of tries) { try { return await chromium.launch(Object.assign({ args }, proxy, t)); } catch (e) {} }
+  for (const t of tries) { try { return await chromium.launch(Object.assign({ args, env: env() }, proxy, t)); } catch (e) {} }
   throw new Error('No browser for the UI tests');
 }
 export async function closeBrowser() { if (browserP) { const b = await browserP.catch(() => null); browserP = null; if (b) await b.close(); } }
 
 // a photo-like file with random bytes (the server never looks inside files)
 export function randomFile(bytes) { return crypto.randomBytes(bytes); }
+
+// A small zip reader (STORE zips like the page makes, ZIP64 too), straight from the file on disk:
+// -> [{ name, size, crc, method, flags, data (where its bytes start), dir, read() }]
+export function readZip(file) {
+  const fd = fs.openSync(file, 'r'), size = fs.fstatSync(fd).size;
+  const rd = (pos, len) => { const b = Buffer.alloc(len); fs.readSync(fd, b, 0, len, pos); return b; };
+  const no = (what) => { throw new Error('not a valid zip: ' + what); };
+  const tail = rd(Math.max(0, size - 22), 22);
+  if (tail.readUInt32LE(0) !== 0x06054b50) no('end of central directory');
+  let n = tail.readUInt16LE(10), cdSize = tail.readUInt32LE(12), cdOff = tail.readUInt32LE(16);
+  if (n === 0xFFFF || cdSize === 0xFFFFFFFF || cdOff === 0xFFFFFFFF) {
+    const loc = rd(size - 22 - 20, 20);
+    if (loc.readUInt32LE(0) !== 0x07064b50) no('ZIP64 locator');
+    const z = rd(Number(loc.readBigUInt64LE(8)), 56);
+    if (z.readUInt32LE(0) !== 0x06064b50) no('ZIP64 end record');
+    n = Number(z.readBigUInt64LE(32)); cdSize = Number(z.readBigUInt64LE(40)); cdOff = Number(z.readBigUInt64LE(48));
+  }
+  const cd = rd(cdOff, cdSize), out = [];
+  for (let p = 0, i = 0; i < n; i++) {
+    if (cd.readUInt32LE(p) !== 0x02014b50) no('central record ' + i);
+    let size = cd.readUInt32LE(p + 24), offset = cd.readUInt32LE(p + 42);
+    const nl = cd.readUInt16LE(p + 28), xl = cd.readUInt16LE(p + 30), cl = cd.readUInt16LE(p + 32);
+    const name = cd.toString('utf8', p + 46, p + 46 + nl), x = cd.subarray(p + 46 + nl, p + 46 + nl + xl);
+    for (let q = 0; q < x.length; q += 4 + x.readUInt16LE(q + 2)) {
+      if (x.readUInt16LE(q) !== 1) continue;
+      let r = q + 4;
+      if (size === 0xFFFFFFFF) { size = Number(x.readBigUInt64LE(r)); r += 16; }
+      if (offset === 0xFFFFFFFF) offset = Number(x.readBigUInt64LE(r));
+    }
+    const lh = rd(offset, 30);
+    if (lh.readUInt32LE(0) !== 0x04034b50) no('local header of ' + name);
+    const data = offset + 30 + lh.readUInt16LE(26) + lh.readUInt16LE(28);
+    out.push({ name, size, crc: cd.readUInt32LE(p + 16), method: cd.readUInt16LE(p + 10), flags: cd.readUInt16LE(p + 8), data, dir: name.endsWith('/'), read: (at = 0, len = size) => rd(data + at, len) });
+    p += 46 + nl + xl + cl;
+  }
+  return out;
+}
+// Python's zipfile, when Python is installed (else null): { names, sha: { name: sha256 } }. It reads every file
+// up to `limit` bytes (zipfile checks each one's CRC as it reads, and fails on a wrong one).
+export function pythonZip(file, limit = Infinity) {
+  let py = null;
+  for (const c of ['python3', 'python']) if (spawnSync(c, ['--version']).status === 0) { py = c; break; }
+  if (!py) return null;
+  const src = 'import zipfile,sys,hashlib,json\nz=zipfile.ZipFile(sys.argv[1])\nlim=float(sys.argv[2])\n' +
+    'print(json.dumps({"names": [i.filename for i in z.infolist()],' +
+    ' "sha": {i.filename: hashlib.sha256(z.read(i)).hexdigest() for i in z.infolist() if not i.is_dir() and i.file_size <= lim}}))';
+  const r = spawnSync(py, ['-I', '-c', src, file, String(limit === Infinity ? 'inf' : limit)], { encoding: 'utf8', maxBuffer: 1 << 26 });
+  if (r.status !== 0) throw new Error('Python zipfile: ' + r.stderr);
+  return JSON.parse(r.stdout);
+}

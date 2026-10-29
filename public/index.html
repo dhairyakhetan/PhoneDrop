@@ -332,6 +332,8 @@ button:focus-visible,a:focus-visible,label:focus-visible{outline:2px solid var(-
 .sheet ul{margin:-6px 0 20px;padding-left:20px;color:var(--mute);font-size:14px}
 .sheet li{margin:7px 0}
 .sheet li b{color:var(--text)}
+.sheet p.faint{color:var(--faint);font-size:13px;margin-top:-8px}
+.sheet p.warn{color:var(--danger)}
 .mobile .modal{align-items:flex-end;padding:10px 10px calc(10px + var(--sab))}
 @keyframes fade{from{opacity:0}}
 @keyframes pop{from{transform:translateY(16px);opacity:0}}
@@ -1921,7 +1923,7 @@ function upFinish(){
   U.hideT = setTimeout(function(){ $('up').hidden = true; }, 2600);
 }
 $('upX').onclick = function(){
-  U.cancelled = true;
+  U.cancelled = true; zipCancel = true;
   U.q.forEach(function(f){ removePending(f._tile); }); U.q = [];
   for (var k in U.xhrs) U.xhrs[k].abort();
 };
@@ -1935,7 +1937,18 @@ window.addEventListener('dragover', function(e){ if (hasFiles(e)) { e.preventDef
 window.addEventListener('dragleave', function(e){ if (!hasFiles(e)) return; if (--depth <= 0) { depth = 0; $('ov').classList.remove('on'); } });
 window.addEventListener('drop', function(e){
   e.preventDefault(); depth = 0; $('ov').classList.remove('on');
-  if (e.dataTransfer && e.dataTransfer.files.length) upload(e.dataTransfer.files);
+  var dt = e.dataTransfer; if (!dt) return;
+  // folders come as directory entries (they have to be picked up right now, inside the drop): files send as
+  // usual, folders get one question for all of them
+  var folders = [], loose = [];
+  [].forEach.call(dt.items || [], function(it){
+    var en = it.kind === 'file' && it.webkitGetAsEntry ? it.webkitGetAsEntry() : null;
+    if (en && en.isDirectory) folders.push(en);
+    else if (it.kind === 'file') { var f = it.getAsFile(); if (f) loose.push(f); }
+  });
+  if (!dt.items || !dt.items.length) loose = [].slice.call(dt.files || []);
+  if (loose.length) upload(loose);
+  if (folders.length) askFolders(folders);
 });
 window.addEventListener('paste', function(e){
   var fl = e.clipboardData && e.clipboardData.files;
@@ -1947,6 +1960,194 @@ window.addEventListener('paste', function(e){
   }
 });
 $('ovT').textContent = isMobile ? 'Drop to send to computer' : 'Drop to send to your phone';
+
+/* ================= folders: zip them, or send what's directly inside ================= */
+// A dropped folder: "Zip and send" makes one <folder>.zip with the subfolders kept (STORE, so photos and videos
+// inside stay byte-identical, and it's quick); "Send contents individually" sends the files directly inside
+// it and skips its subfolders. System files (desktop.ini, Thumbs.db, .DS_Store) are left out either way.
+var SYS_FILES = /^(desktop\.ini|thumbs\.db|\.ds_store)$/i;
+function readDir(dir){
+  return new Promise(function(res, rej){
+    var r = dir.createReader(), all = [];
+    (function next(){ r.readEntries(function(l){ if (!l.length) return res(all); all = all.concat([].slice.call(l)); next(); }, rej); })();
+  });
+}
+// -> { name, files: [{ path, file, top }], dirs: [path], subs, bytes, skipped: [path] }. A subfolder or file the
+// browser can't read is left out and listed in `skipped` (the question says so); an unreadable folder fails.
+function scanFolder(root){
+  var o = { name: root.name, files: [], dirs: [root.name + '/'], subs: 0, bytes: 0, skipped: [] };
+  function walk(dir, path){
+    return readDir(dir).then(function(list){
+      return Promise.all(list.map(function(en){
+        var p = path + '/' + en.name;
+        if (en.isDirectory) { o.subs++; o.dirs.push(p + '/'); return walk(en, p); }
+        if (SYS_FILES.test(en.name)) return null;
+        return new Promise(function(res){
+          en.file(function(f){ o.files.push({ path: p, file: f, top: path === root.name }); o.bytes += f.size; res(); }, function(){ o.skipped.push(p); res(); });
+        });
+      }));
+    }, function(err){
+      if (path === root.name) throw err;
+      o.skipped.push(path + '/'); o.dirs.splice(o.dirs.indexOf(path + '/'), 1);
+    });
+  }
+  return walk(root, root.name).then(function(){
+    o.files.sort(function(a, b){ return a.path < b.path ? -1 : a.path > b.path ? 1 : 0; });
+    o.dirs.sort();
+    return o;
+  });
+}
+function askFolders(entries){
+  Promise.all(entries.map(scanFolder)).then(function(list){
+    var empty = list.filter(function(o){ return !o.files.length; });
+    if (empty.length) toast('“' + empty[0].name + '”' + (empty.length > 1 ? ' and ' + (empty.length - 1) + ' more are' : ' is') + ' empty');
+    list = list.filter(function(o){ return o.files.length; });
+    if (!list.length) return;
+    var n = 0, bytes = 0, subs = 0, top = [], skipped = [];
+    list.forEach(function(o){ n += o.files.length; bytes += o.bytes; subs += o.subs; skipped = skipped.concat(o.skipped); o.files.forEach(function(x){ if (x.top) top.push(x.file); }); });
+    var one = list.length === 1, nm = one ? '“' + list[0].name + '”' : list.length + ' folders';
+    var html = '<p><b>' + esc(joinDot(plural(n, 'file'), fmt(bytes), subs ? plural(subs, 'subfolder') : '')) + '</b></p><ul>' +
+      '<li><b>Zip and send:</b> ' + (one ? 'one ' + esc(list[0].name) + '.zip' : 'one zip per folder') + (subs ? ', subfolders kept.' : '.') + '</li>' +
+      (top.length ? '<li><b>Send contents individually:</b> the ' + plural(top.length, 'file') + ' directly inside, straight away' +
+        (subs ? '. Skips ' + (subs === 1 ? 'the subfolder' : 'the ' + subs + ' subfolders') + '.' : '.') + '</li>' : '<li>There are no files directly inside, so it can only be zipped.</li>') +
+      '</ul>' + (skipped.length ? '<p class="warn">Couldn’t read ' + (skipped.length === 1 ? '“' + esc(skipped[0].replace(/\/$/, '')) + '”' : skipped.length + ' items (like “' + esc(skipped[0].replace(/\/$/, '')) + '”)') + ': left out.</p>' : '') +
+      '<p class="faint">A zip is one file (phones put it in Files). Sending individually makes photos show up for Save to Photos.</p>';
+    var acts = [{ label: 'Cancel' }];
+    if (top.length) acts.push({ label: 'Send ' + (top.length === 1 ? '1 file' : top.length + ' files') + ' individually' });
+    acts.push({ label: 'Zip and send', cls: 'primary' });
+    sheet({ title: 'Send ' + nm + '?', html: html, actions: acts }).then(function(i){
+      var a = acts[i]; if (!a || i === 0) return;
+      if (a.cls === 'primary') zipQueue(list); else upload(top);
+    });
+  }, function(){ toast('Couldn’t read that folder'); });
+}
+// zip the folders one after another, then send each zip through the normal upload (progress, cancel, resume)
+var zipCancel = false;
+function zipQueue(list){
+  zipCancel = false;
+  var i = 0;
+  (function next(){
+    var o = list[i++]; if (!o || zipCancel) return;
+    var entries = o.dirs.map(function(d){ return { path: d, dir: true }; }).concat(o.files);
+    var st = function(frac){
+      clearTimeout(U.hideT);
+      $('up').hidden = false; $('up').classList.remove('done'); $('upX').hidden = false;
+      if (U.active || U.q.length) return;   // uploads running: their progress shows instead
+      $('upT').textContent = 'Zipping “' + o.name + '”…'; $('upP').textContent = Math.floor(frac * 100) + '%';
+      $('upF').style.width = frac * 100 + '%'; $('upS').textContent = '';
+    };
+    st(0);
+    var shown = 0, prog = function(d, t){ if (Date.now() - shown > 150 || d === t) { shown = Date.now(); st(t ? d / t : 1); } };
+    makeZip(entries, prog, function(){ return zipCancel; }).then(function(z){
+      var zip = new File(z.parts, o.name + '.zip', { type: 'application/zip', lastModified: Date.now() });
+      upload([zip]);
+      next();
+    }, function(e){
+      if (!U.active && !U.q.length) $('up').hidden = true;
+      toast(e && e.message === 'cancelled' ? 'Zipping cancelled' : 'Couldn’t zip “' + o.name + '”');
+    });
+  })();
+}
+
+/* zip:begin — a STORE zip (no compression) built from the original files, with ZIP64 for files or zips over
+   4 GB and over 65,535 entries. Plain ES5 + Blob/TextEncoder/DataView so test/zip.test.mjs runs it in Node too.
+   makeZip([{ path, file } | { path: 'dir/', dir: true }], onProgress(done, total), cancelled()) -> Promise of
+   { parts, size }: header bytes and the original File objects, in order; new Blob(parts) is the zip, and a
+   multi-GB folder is never held in memory. CRC-32 is worked out first, reading each file in 4 MB pieces. */
+// CRC-32 "slicing by 8": 8 tables of 256, 8 bytes per step (about 4x faster than a byte at a time)
+var ZIP_CRC = (function(){
+  var t = new Uint32Array(2048);
+  for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  for (n = 256; n < 2048; n++) t[n] = (t[n - 256] >>> 8) ^ t[t[n - 256] & 255];
+  return t;
+})();
+function zipCrc(crc, b){
+  var t = ZIP_CRC, c = ~crc >>> 0, i = 0, n = b.length, end = n - (n & 7), hi;
+  for (; i < end; i += 8) {
+    c ^= b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24);
+    hi = b[i + 4] | (b[i + 5] << 8) | (b[i + 6] << 16) | (b[i + 7] << 24);
+    c = t[1792 + (c & 255)] ^ t[1536 + ((c >>> 8) & 255)] ^ t[1280 + ((c >>> 16) & 255)] ^ t[1024 + (c >>> 24)] ^
+        t[768 + (hi & 255)] ^ t[512 + ((hi >>> 8) & 255)] ^ t[256 + ((hi >>> 16) & 255)] ^ t[hi >>> 24];
+  }
+  for (; i < n; i++) c = t[(c ^ b[i]) & 255] ^ (c >>> 8);
+  return ~c >>> 0;
+}
+function zipRead(blob){
+  if (blob.arrayBuffer) return blob.arrayBuffer();
+  return new Promise(function(res, rej){ var r = new FileReader(); r.onload = function(){ res(r.result); }; r.onerror = rej; r.readAsArrayBuffer(blob); });
+}
+function makeZip(entries, onProgress, cancelled){
+  var total = 0, done = 0, PIECE = 4194304;
+  entries.forEach(function(e){ if (!e.dir) total += e.file.size; });
+  // 1. CRC-32 of every file
+  var chain = Promise.resolve();
+  entries.forEach(function(e){
+    if (e.dir) { e.crc = 0; return; }
+    chain = chain.then(function(){
+      var crc = 0, pos = 0, size = e.file.size;
+      return (function piece(){
+        if (cancelled && cancelled()) throw new Error('cancelled');
+        if (pos >= size) { e.crc = crc; return; }
+        return zipRead(e.file.slice(pos, Math.min(size, pos + PIECE))).then(function(ab){
+          var b = new Uint8Array(ab); crc = zipCrc(crc, b); pos += b.length; done += b.length;
+          if (!b.length) throw new Error('read failed');
+          if (onProgress) onProgress(done, total);
+          return piece();
+        });
+      })();
+    });
+  });
+  // 2. headers around the original files
+  return chain.then(function(){
+    var enc = new TextEncoder(), parts = [], cds = [], offset = 0, M32 = 0xFFFFFFFF;
+    var set64 = function(dv, at, v){ dv.setUint32(at, v % 0x100000000, true); dv.setUint32(at + 4, Math.floor(v / 0x100000000), true); };
+    entries.forEach(function(e){
+      var name = enc.encode(e.path), size = e.dir ? 0 : e.file.size, big = size >= M32, far = offset >= M32;
+      var d = new Date(e.dir ? Date.now() : e.file.lastModified || Date.now());
+      if (d.getFullYear() < 1980 || d.getFullYear() > 2107) d = new Date(1980, 0, 1);   // what a zip's date can hold
+      var time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+      var date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+      var need = big || far ? 45 : 20, lx = big ? 20 : 0;
+      var lh = new DataView(new ArrayBuffer(30 + name.length + lx));
+      lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, need, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true);
+      lh.setUint16(10, time, true); lh.setUint16(12, date, true); lh.setUint32(14, e.crc, true);
+      lh.setUint32(18, big ? M32 : size, true); lh.setUint32(22, big ? M32 : size, true);
+      lh.setUint16(26, name.length, true); lh.setUint16(28, lx, true);
+      new Uint8Array(lh.buffer).set(name, 30);
+      if (big) { lh.setUint16(30 + name.length, 1, true); lh.setUint16(32 + name.length, 16, true); set64(lh, 34 + name.length, size); set64(lh, 42 + name.length, size); }
+      parts.push(lh.buffer);
+      if (size) parts.push(e.file);
+      // its central directory record (ZIP64 extra: sizes and/or offset, in that order, only those that don't fit)
+      var z = []; if (big) { z.push(size); z.push(size); } if (far) z.push(offset);
+      var cx = z.length ? 4 + 8 * z.length : 0, ch = new DataView(new ArrayBuffer(46 + name.length + cx));
+      ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, need, true); ch.setUint16(6, need, true); ch.setUint16(8, 0x0800, true);
+      ch.setUint16(10, 0, true); ch.setUint16(12, time, true); ch.setUint16(14, date, true); ch.setUint32(16, e.crc, true);
+      ch.setUint32(20, big ? M32 : size, true); ch.setUint32(24, big ? M32 : size, true);
+      ch.setUint16(28, name.length, true); ch.setUint16(30, cx, true); ch.setUint16(32, 0, true); ch.setUint16(34, 0, true); ch.setUint16(36, 0, true);
+      ch.setUint32(38, e.dir ? 0x10 : 0x20, true); ch.setUint32(42, far ? M32 : offset, true);
+      new Uint8Array(ch.buffer).set(name, 46);
+      if (cx) { ch.setUint16(46 + name.length, 1, true); ch.setUint16(48 + name.length, 8 * z.length, true); for (var k = 0; k < z.length; k++) set64(ch, 50 + name.length + 8 * k, z[k]); }
+      cds.push(ch.buffer);
+      offset += lh.byteLength + size;
+    });
+    var cdStart = offset, cdSize = 0, n = entries.length, tail = 22;
+    cds.forEach(function(b){ parts.push(b); cdSize += b.byteLength; });
+    if (n >= 0xFFFF || cdStart >= M32 || cdSize >= M32) {   // ZIP64 end of central directory + its locator
+      var z64 = new DataView(new ArrayBuffer(76));
+      z64.setUint32(0, 0x06064b50, true); set64(z64, 4, 44); z64.setUint16(12, 45, true); z64.setUint16(14, 45, true);
+      z64.setUint32(16, 0, true); z64.setUint32(20, 0, true); set64(z64, 24, n); set64(z64, 32, n); set64(z64, 40, cdSize); set64(z64, 48, cdStart);
+      z64.setUint32(56, 0x07064b50, true); z64.setUint32(60, 0, true); set64(z64, 64, cdStart + cdSize); z64.setUint32(72, 1, true);
+      parts.push(z64.buffer); tail += 76;
+    }
+    var eo = new DataView(new ArrayBuffer(22));
+    eo.setUint32(0, 0x06054b50, true); eo.setUint16(4, 0, true); eo.setUint16(6, 0, true);
+    eo.setUint16(8, Math.min(n, 0xFFFF), true); eo.setUint16(10, Math.min(n, 0xFFFF), true);
+    eo.setUint32(12, Math.min(cdSize, M32), true); eo.setUint32(16, Math.min(cdStart, M32), true); eo.setUint16(20, 0, true);
+    parts.push(eo.buffer);
+    return { parts: parts, size: cdStart + cdSize + tail };
+  });
+}
+/* zip:end */
 
 /* ================= viewer ================= */
 var lbList = [], lbIdx = -1, lbKey = '', lbFile = null, lbWant = false, lbMeter = new Meter(), lbUrl = '';
@@ -2114,7 +2315,7 @@ window.addEventListener('keydown', function(e){
 // Only when the server runs in test mode (it adds window.PD_TEST to the page). On the PC the panel switches the
 // server's fakes (testmode.js explains them); on a phone it shows what each download is doing.
 if (window.PD_TEST) (function(){
-  window.PD = { dls: dls, files: function(){ return files; } };   // for the automated tests in test/
+  window.PD = { dls: dls, files: function(){ return files; }, askFolders: askFolders };   // for the automated tests in test/
   var badge = document.createElement('button'), pn = document.createElement('div'), timer = 0;
   badge.className = 'tbadge'; badge.textContent = 'TEST'; badge.title = 'Test mode: debug panel';
   pn.className = 'tpanel'; pn.hidden = true;
