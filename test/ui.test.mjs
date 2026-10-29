@@ -628,10 +628,18 @@ test('notes: Ctrl+V with text opens Send text, filled in; nothing is sent until 
   await pc.press('#textIn', 'Control+Enter');
   await waitFor(async () => (await s.api('/api/files')).body.length === 1, 5000, 'sent');
   assert.equal((await s.api('/api/files')).body[0].preview, 'meant to send\n');
-  // an empty box doesn't send
+  // an empty box can't send (Send stays grey, Ctrl+Enter does nothing), and the box grows with what's typed
   await pc.click('#textBtn');
-  await pc.click('#mRow .primary');
+  assert.equal(await pc.$eval('#mRow .primary', (b) => b.disabled), true);
+  await pc.keyboard.press('Control+Enter');
   assert.equal(await pc.$eval('#modal', (m) => m.hidden), false);
+  assert.match(await text(pc, '#textHint'), /Ctrl\+Enter to send/);
+  const h0 = await pc.$eval('#textIn', (t) => t.offsetHeight);
+  await pc.fill('#textIn', 'line\n'.repeat(8));
+  assert.ok((await pc.$eval('#textIn', (t) => t.offsetHeight)) > h0, 'grew');
+  assert.equal(await pc.$eval('#mRow .primary', (b) => b.disabled), false);
+  await pc.fill('#textIn', 'https://example.com/a');
+  assert.match(await text(pc, '#textHint'), /A link: it opens with one tap there/);
   await closeAll();
 });
 
@@ -942,5 +950,49 @@ test('Windows setup: "Finish setup · needs admin once"; No says so and Try agai
   assert.match(await text(pc, '#setupS'), /^Phones can’t reach PhoneDrop through Windows Firewall yet\./);
   await pc.click('#setupLater');
   assert.equal(await pc.$eval('#setup', (e) => e.hidden), true);
+  await closeAll();
+});
+
+test('phone → PC: many photos at once: thumbnails one at a time, shrunk while decoding, the right way up', async () => {
+  await reset();
+  const pc = await open('pc');
+  // real JPEGs, made by the browser: landscape and portrait with a black bar on the left, and the landscape one
+  // again with an EXIF "rotate 90°" tag (how phones store most portrait photos)
+  const jpeg = (w, h) => pc.evaluate(async ([w, h]) => {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d'); g.fillStyle = '#8899dd'; g.fillRect(0, 0, w, h); g.fillStyle = '#000'; g.fillRect(0, 0, w / 10, h);
+    const b = await new Promise((ok) => c.toBlob(ok, 'image/jpeg', 0.9));
+    return [...new Uint8Array(await b.arrayBuffer())];
+  }, [w, h]).then((a) => Buffer.from(a));
+  const land = await jpeg(2400, 1800), port = await jpeg(1800, 2400);
+  const exif6 = Buffer.concat([land.subarray(0, 2), Buffer.from([0xFF, 0xE1, 0, 34, 0x45, 0x78, 0x69, 0x66, 0, 0, 0x49, 0x49, 0x2A, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0]), land.subarray(2)]);
+  const files = [['land.jpg', land], ['portrait.jpg', port], ['rotated.jpg', exif6]];
+  for (let i = 1; i <= 5; i++) files.push(['more' + i + '.jpg', land]);
+  // count createImageBitmap calls running at once, and their options
+  const an = await open('android', { init: () => {
+    const orig = window.createImageBitmap, c = window.__cib = { active: 0, max: 0, opts: [] };
+    window.createImageBitmap = function (src, o) { c.active++; c.max = Math.max(c.max, c.active); c.opts.push(o || null); return orig.apply(this, arguments).finally(() => { c.active--; }); };
+  } });
+  await an.setInputFiles('#pickPhone', files.map(([name, buffer]) => ({ name, mimeType: 'image/jpeg', buffer })));
+  await waitFor(async () => (await s.api('/api/files')).body.filter((f) => f.thumb).length === files.length, 30000, 'every photo with its thumbnail');
+  const cib = await an.evaluate(() => window.__cib);
+  assert.equal(cib.max, 1, 'one at a time');
+  assert.equal(cib.opts.length, files.length);
+  assert.ok(cib.opts.every((o) => o && o.resizeWidth > 0 && o.imageOrientation === 'from-image'), 'shrunk while decoding: ' + JSON.stringify(cib.opts[0]));
+  // size and which way up: [width, height, brightness at the left edge, brightness at the top edge]
+  const look = (name) => pc.evaluate(async (name) => {
+    const bmp = await createImageBitmap(await (await fetch('/thumbs/' + encodeURIComponent(name))).blob());
+    const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+    const g = c.getContext('2d'); g.drawImage(bmp, 0, 0);
+    const px = (x, y) => { const d = g.getImageData(x, y, 1, 1).data; return (d[0] + d[1] + d[2]) / 3; };
+    return [bmp.width, bmp.height, px(4, bmp.height >> 1), px(bmp.width >> 1, 4)];
+  }, name);
+  const [lw, lh, lLeft, lTop] = await look('land.jpg');
+  assert.equal(lh, 440); assert.ok(lw > lh); assert.ok(lLeft < 40 && lTop > 100, 'landscape: bar on the left');
+  const [pw, ph] = await look('portrait.jpg');
+  assert.equal(pw, 440); assert.ok(ph > pw);
+  const [rw, rh, rLeft, rTop] = await look('rotated.jpg');
+  assert.equal(rw, 440); assert.ok(rh > rw, 'turned upright'); assert.ok(rTop < 40 && rLeft > 100, 'rotated: the bar ends up on top');
+  assert.deepEqual(an.errors, []);
   await closeAll();
 });

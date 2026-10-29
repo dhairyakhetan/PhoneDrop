@@ -184,9 +184,21 @@ button:focus-visible,a:focus-visible,label:focus-visible{outline:2px solid var(-
 .notefull{white-space:pre-wrap;overflow-wrap:anywhere;max-height:min(50vh,420px);overflow:auto;-webkit-user-select:text;user-select:text;font-size:15px;line-height:1.45;
   background:var(--surface2);padding:12px 14px;border-radius:12px;margin:0 0 4px}
 .notefull a{color:var(--acc);text-decoration:underline}
-.textbox{width:100%;min-height:150px;max-height:50vh;resize:vertical;box-sizing:border-box;padding:12px 14px;border-radius:12px;border:1px solid var(--line2);
-  background:var(--surface2);color:var(--text);font:inherit;font-size:16px;line-height:1.4}
-.textbox:focus{outline:2px solid var(--acc);outline-offset:1px}
+/* Send text: a compose box that grows with what you type */
+.sheet.compose{max-width:460px}
+.sheet.compose .sub{margin:-2px 0 14px}
+.textbox{display:block;width:100%;min-height:104px;max-height:min(45vh,340px);resize:none;overflow-y:auto;box-sizing:border-box;padding:12px 14px;
+  border-radius:14px;border:1px solid var(--line2);background:var(--surface2);color:var(--text);font:inherit;font-size:16px;line-height:1.45;
+  transition:border-color .15s,box-shadow .15s}
+.textbox::placeholder{color:var(--faint)}
+.textbox:focus{outline:none;border-color:var(--acc);box-shadow:0 0 0 3px var(--acc-soft)}
+.tb-foot{display:flex;align-items:center;gap:6px;min-height:18px;margin:8px 2px 16px;font-size:12.5px;color:var(--faint)}
+.tb-foot svg.i{width:14px;height:14px;flex:none;color:var(--acc)}
+.tb-foot .n{margin-left:auto;font-variant-numeric:tabular-nums}
+.tb-foot kbd{font:inherit;font-size:11.5px;padding:1px 5px;border-radius:5px;border:1px solid var(--line2);color:var(--mute)}
+.desktop .sheet.compose .row{justify-content:flex-end}
+.desktop .sheet.compose .row .btn{flex:none;min-width:100px;height:40px}
+.sheet.compose .row .btn svg.i{width:17px;height:17px}
 .toast.act{pointer-events:auto;display:flex;align-items:center;gap:12px;padding:6px 6px 6px 16px}
 .toast .tb{background:rgba(255,255,255,.16);color:#fff;border-radius:999px;padding:6px 12px;font-weight:700;font-size:13px}
 .face .nm{font-size:12px;color:var(--mute);line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
@@ -708,6 +720,7 @@ var IC = {
   update: '<svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66L20 8.5"/><path d="M20 3.5v5h-5"/></svg>',
   phone: '<svg class="i" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18h2"/></svg>',
   text: '<svg class="i" viewBox="0 0 24 24"><path d="M5 6h14M5 11h14M5 16h9"/></svg>',
+  send: '<svg class="i" viewBox="0 0 24 24"><path d="M21 3 10.5 13.5M21 3l-6.5 18-4-7.5L3 9.5z"/></svg>',
   link: '<svg class="i" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg>',
   spin: '<svg class="i" viewBox="0 0 24 24" style="animation:sp 1s linear infinite"><path d="M12 3a9 9 0 1 0 9 9"/></svg>',
   shield: '<svg class="i" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>'
@@ -779,6 +792,7 @@ var sheetDone = null;
 function sheet(o){
   return new Promise(function(res){
     if (sheetDone) sheetDone(-1);
+    $('modal').firstElementChild.className = 'sheet' + (o.cls ? ' ' + o.cls : '');
     $('mT').textContent = o.title;
     if (o.html) $('mP').innerHTML = o.html; else { $('mP').innerHTML = ''; var p = document.createElement('p'); p.textContent = o.text || ''; $('mP').appendChild(p); }
     var row = $('mRow'); row.innerHTML = ''; row.className = 'row' + (o.actions.length > 2 ? ' col' : '');
@@ -1671,15 +1685,28 @@ function noteToast(f){
   }, function(){});
 }
 // Send text: a box (PC: also Ctrl+V with text, pre-filled; it still needs a click, so a stray paste sends nothing)
+// the box grows with what's typed (up to about half the screen); Send stays grey until there's something to send
 function openTextBox(pre){
-  sheet({ title: isMobile ? 'Send text to the computer' : 'Send text to your phone',
-    html: '<textarea class="textbox" id="textIn" placeholder="Type or paste text or a link"></textarea>',
+  sheet({ cls: 'compose', title: isMobile ? 'Send text to the computer' : 'Send text to your phone',
+    html: '<p class="sub">' + (isMobile ? 'It shows up on the computer as a note you can copy.' : 'It shows up on your phone as a note you can copy.') + '</p>' +
+      '<textarea class="textbox" id="textIn" rows="3" placeholder="Type or paste text or a link"></textarea><div class="tb-foot" id="textHint"></div>',
     actions: [{ label: 'Cancel' }, { label: 'Send', cls: 'primary', run: function(){
       var t = $('textIn').value;
-      if (!t.trim()) { toast('Type something first'); return false; }
+      if (!t.trim()) return false;
       sendText(t);
     } }] });
-  var a = $('textIn'); a.value = pre || ''; setTimeout(function(){ a.focus(); }, 30);
+  var a = $('textIn'), go = $('mRow').lastChild;
+  setBtn(go, IC.send, 'Send');
+  var fit = function(){
+    a.style.height = 'auto'; a.style.height = a.scrollHeight + 2 + 'px';
+    var t = a.value, n = t.length;
+    go.disabled = !t.trim();
+    $('textHint').innerHTML = (singleLink(t) ? IC.link + 'A link: it opens with one tap there' : isMobile ? '' : '<kbd>Ctrl</kbd>+<kbd>Enter</kbd> to send') +
+      (n > 500 ? '<span class="n">' + n.toLocaleString() + ' characters</span>' : '');
+  };
+  a.oninput = fit;
+  a.value = pre || ''; fit();
+  setTimeout(function(){ a.focus(); a.setSelectionRange(a.value.length, a.value.length); }, 30);
 }
 function sendText(t){
   fetch('/api/text?from=' + enc(myId) + '&fromName=' + enc(myName), { method: 'POST', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: t })
@@ -1832,26 +1859,49 @@ $('updNotes').onclick = function(){
 };
 
 /* ================= uploading (with thumbnails made in the browser) ================= */
-// -> { blob, dur } (dur = video length in seconds) or null
+// -> { blob, dur } (dur = video length in seconds) or null. One at a time, in the order the files are sent:
+// a phone decoding three 12-megapixel photos at once (on the page's own thread) froze it for seconds.
+var thumbQ = Promise.resolve(), THUMB_SIDE = 440;
 function makeThumb(file){
+  var p = thumbQ.then(function(){ return thumbNow(file); });
+  thumbQ = p;
+  return p;
+}
+function thumbNow(file){
   return new Promise(function(resolve){
     var t = /^image\//.test(file.type) || /\.(heic|heif)$/i.test(file.name) ? 'image' : /^video\//.test(file.type) || /\.(mov|mp4|m4v|webm)$/i.test(file.name) ? 'video' : '';
     if (!t || (t === 'image' && file.size > 80 * 1048576)) return resolve(null);
-    var url = URL.createObjectURL(file), done = false, dur = 0;
+    var url = '', done = false, dur = 0;
     var timer = setTimeout(function(){ finish(null); }, 8000);
-    function finish(b){ if (done) return; done = true; clearTimeout(timer); URL.revokeObjectURL(url); resolve(b || dur ? { blob: b, dur: dur } : null); }
+    function finish(b){ if (done) return; done = true; clearTimeout(timer); if (url) URL.revokeObjectURL(url); resolve(b || dur ? { blob: b, dur: dur } : null); }
+    // a small JPEG with the short side THUMB_SIDE (src is already small when the browser could shrink it while decoding)
     function draw(src, w, h){
       if (!w || !h) return finish(null);
-      var s = Math.min(1, 440 / Math.min(w, h)), c = document.createElement('canvas');
+      var s = Math.min(1, THUMB_SIDE / Math.min(w, h)), c = document.createElement('canvas');
       c.width = Math.max(1, Math.round(w * s)); c.height = Math.max(1, Math.round(h * s));
-      try { c.getContext('2d').drawImage(src, 0, 0, c.width, c.height); c.toBlob(function(b){ finish(b); }, 'image/jpeg', 0.8); } catch (e) { finish(null); }
+      try { c.getContext('2d').drawImage(src, 0, 0, c.width, c.height); } catch (e) { return finish(null); }
+      if (src.close) src.close();
+      c.toBlob(function(b){ finish(b); }, 'image/jpeg', 0.8);
+    }
+    function viaImg(){   // decode() decodes off the page's thread too, so only the shrinking happens on it
+      url = URL.createObjectURL(file);
+      var img = new Image(); img.decoding = 'async';
+      img.onerror = function(){ finish(null); };
+      img.onload = function(){
+        var go = function(){ draw(img, img.naturalWidth, img.naturalHeight); };
+        if (img.decode) img.decode().then(go, go); else go();
+      };
+      img.src = url;
     }
     if (t === 'image') {
-      var img = new Image(); img.decoding = 'async';
-      img.onload = function(){ draw(img, img.naturalWidth, img.naturalHeight); };
-      img.onerror = function(){ finish(null); };
-      img.src = url;
+      // decoded and shrunk off the page's thread (a JPEG can be decoded at 1/2, 1/4 or 1/8 size straight away),
+      // turned the right way up (EXIF). A browser that ignores the size options just gives the full size.
+      // (4:3 wide = the short side; a portrait one comes out a little bigger and is shrunk the rest of the way by draw)
+      if (!window.createImageBitmap) return viaImg();
+      createImageBitmap(file, { resizeWidth: Math.round(THUMB_SIDE * 4 / 3), resizeQuality: 'medium', imageOrientation: 'from-image' })
+        .then(function(bmp){ draw(bmp, bmp.width, bmp.height); }, viaImg);
     } else {
+      url = URL.createObjectURL(file);
       var v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'metadata';
       v.onloadedmetadata = function(){ dur = isFinite(v.duration) ? v.duration : 0; try { v.currentTime = Math.min(1, (v.duration || 1) / 3); } catch (e) { finish(null); } };
       v.onseeked = function(){ draw(v, v.videoWidth, v.videoHeight); };

@@ -943,7 +943,9 @@ function openWindow() {
 }
 
 // Windows: the browser's app window would show the page's 16 px favicon in the taskbar (blurry) and pin as a
-// browser shortcut to localhost. installer/appid.ps1 gives it PhoneDrop's own taskbar button and icon instead.
+// browser shortcut to localhost. installer/appid.ps1 gives it PhoneDrop's own taskbar button and PhoneDrop.exe's
+// icon in the sizes the screen needs, and stays (detached, one at a time) to put the icon back whenever Chrome
+// resets it, until the window has been closed for 20 s.
 function labelWindow() {
   if (!IS_EXE || process.platform !== 'win32') return;
   try {
