@@ -322,6 +322,101 @@ function forget(name) {
   for (const ext of ['.jpg', '.json']) { try { fs.unlinkSync(path.join(THUMBS, name + ext)); } catch (e) {} }
 }
 const BIG_BUF = { highWaterMark: 1 << 20 }; // 1 MB chunks: much faster for big videos
+
+// ---------- resumable uploads ----------
+// The page sends a file in ~8 MB parts. Each file gets a key (who sends it + the page's uid + name + size); its bytes
+// collect in the hidden file .up-<key>, and the server is the one that says how much has arrived:
+//   GET    /upload/part?name&size&uid            -> {received}, or {name} when it already arrived and is still here
+//   POST   /upload/part?name&size&uid&offset=n   the bytes from n on -> {received} | {name} once the last byte is in |
+//                                                409 {received} when n isn't what the server has
+//   DELETE /upload/part?name&size&uid            cancelled: the partial file is thrown away
+// Bytes that arrived before a connection dropped are kept, so a Wi-Fi blip or a reloaded page carries on where it
+// stopped. One request writes to a file at a time: a newer one first stops the older one (a dead Wi-Fi connection
+// the server hasn't noticed yet), so late bytes from it can never land twice.
+const PART_IDLE = 3600000; // partial files with no progress for an hour are deleted
+const parts = new Map();   // key -> the request writing to it (or waiting to)
+function partSize(key) { try { return fs.statSync(path.join(DIR, '.up-' + key)).size; } catch (e) { return 0; } }
+// stop a part request (it keeps what it has written) -> a promise for when its file is closed
+function stopPart(e) {
+  if (!e) return Promise.resolve();
+  return e.ready.then(() => new Promise((ok) => {
+    if (!e.out || e.closed) return ok();
+    e.waiters.push(ok);
+    if (!e.out.writableEnded) { e.req.unpipe(e.out); e.out.end(); }
+    if (!e.req.complete) e.req.destroy();
+  }));
+}
+function uploadPart(req, res, q, phone) {
+  const name = safeName(q('name')), size = Number(q('size')), uid = String(q('uid') || '');
+  if (!Number.isSafeInteger(size) || size < 0 || !/^[\w.-]{6,120}$/.test(uid)) { req.resume(); return json(res, 400, { error: 'bad request' }); }
+  const key = crypto.createHash('sha256').update([phone ? phone.pid : 'pc', uid, name, size].join('\n')).digest('hex').slice(0, 32);
+  const file = path.join(DIR, '.up-' + key);
+  // arrived already, and the file is still here (deleted on the PC since -> it's sent again)
+  const arrived = () => {
+    const n = uploaded.get('p:' + key);
+    try { if (n && fs.statSync(path.join(DIR, n)).size === size) return n; } catch (e) {}
+    uploaded.delete('p:' + key); return null;
+  };
+  if (req.method === 'GET') { const n = arrived(); return json(res, 200, n ? { name: n } : { received: partSize(key) }); }
+  if (req.method !== 'POST' && req.method !== 'DELETE') { req.resume(); return json(res, 405, { error: 'method not allowed' }); }
+  const offset = Number(q('offset')), len = Number(req.headers['content-length']);
+  // answer once the part has been read (thrown away if need be): answering while the phone is still sending it
+  // closes the connection under it, and the phone would see a dropped connection instead of the answer
+  const reply = (code, obj) => { if (req.complete) return json(res, code, obj); req.resume(); req.once('end', () => json(res, code, obj)); };
+  const me = { req, out: null, closed: false, waiters: [], ready: stopPart(parts.get(key)) };
+  parts.set(key, me);
+  me.ready.then(() => {
+    const mine = parts.get(key) === me;
+    if (mine) parts.delete(key); // (back in while it writes)
+    if (req.method === 'DELETE') { if (mine) fs.rm(file, { force: true }, () => {}); return reply(200, { ok: true }); }
+    if (!mine) return reply(409, { received: partSize(key) }); // an even newer request took over
+    const n = arrived();
+    if (n) return reply(200, { name: n });
+    const have = partSize(key);
+    if (offset !== have) return reply(409, { received: have });
+    if (!Number.isSafeInteger(len) || len < 0 || offset + len > size) return reply(400, { error: 'bad part' });
+    if (TEST) { T.stats.uploads++; if (T.diskFull) return reply(507, { error: 'disk full' }); }
+    const out = fs.createWriteStream(file, { flags: 'a', highWaterMark: 1 << 20 });
+    let failed = null;
+    me.out = out; parts.set(key, me);
+    if (TEST) req.on('data', (c) => { // test mode: the Wi-Fi drops / the disk fills up part way
+      const f = T.upData(req, c.length);
+      if (f === 'cut') req.socket.destroy();
+      if (f === 'full') out.destroy(Object.assign(new Error('no space left on device'), { code: 'ENOSPC' }));
+    });
+    out.on('error', (e) => { failed = e && e.code === 'ENOSPC' ? 'disk full' : 'write failed'; req.unpipe(out); req.resume(); });
+    req.on('close', () => { if (!req.complete && !out.writableEnded) { req.unpipe(out); out.end(); } }); // keep what arrived
+    out.on('close', () => {
+      me.closed = true; me.waiters.forEach((ok) => ok());
+      if (parts.get(key) === me) parts.delete(key);
+      if (failed) {
+        if (failed === 'disk full') fs.rm(file, { force: true }, () => {}); // give the space back
+        return reply(failed === 'disk full' ? 507 : 500, { error: failed });
+      }
+      const now = partSize(key);
+      if (now < size) return json(res, 200, { received: now }); // more to come (or nobody's listening: the Wi-Fi dropped)
+      const final = uniqueName(name);
+      try { fs.renameSync(file, path.join(DIR, final)); } catch (e) { return json(res, 500, { error: 'save failed' }); }
+      uploaded.set('p:' + key, final); if (uploaded.size > 1000) uploaded.delete(uploaded.keys().next().value);
+      if (phone) setMeta(final, { from: { id: String(q('from') || phone.id).slice(0, 40), name: String(q('fromName') || phone.name).slice(0, 40) } });
+      if (q('thumb')) { pendingThumb.add(final); setTimeout(() => { pendingThumb.delete(final); bump(); }, 5000); }
+      json(res, 200, { name: final });
+      bump();
+    });
+    req.pipe(out);
+  });
+}
+// partial files nobody has added to for an hour (the phone gave up, or the file was cancelled on a page that's gone)
+function tidyParts() {
+  let names = [];
+  try { names = fs.readdirSync(DIR); } catch (e) {}
+  const idle = TEST ? T.partIdle : PART_IDLE;
+  for (const n of names) {
+    if (!n.startsWith('.up-') || parts.has(n.slice(4))) continue;
+    try { if (Date.now() - fs.statSync(path.join(DIR, n)).mtimeMs > idle) fs.rmSync(path.join(DIR, n), { force: true }); } catch (e) {}
+  }
+}
+setInterval(tidyParts, TEST ? 300 : 300000).unref();
 // notes (text or a link sent from either side) are .txt files with `note: true` in their metadata, so listing,
 // live updates, delete and Clear all treat them like any file. Named after their start: "Link - example.com.txt".
 const NOTE_MAX = 1048576;
@@ -689,6 +784,7 @@ function handler(req, res) {
     req.pipe(out);
     return;
   }
+  if (p === '/upload/part') return uploadPart(req, res, q, phone);
   if (req.method === 'POST' && p === '/api/text') {
     if (Number(req.headers['content-length']) > NOTE_MAX) { req.resume(); return json(res, 413, { error: 'too long (1 MB at most)' }); }
     const chunks = []; let len = 0;

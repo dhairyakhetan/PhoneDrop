@@ -21,6 +21,9 @@
       POST /api/test/faults     {cutAfter, cutCount, diskFull, grace}   cut the next cutCount downloads after
                                 cutAfter bytes (like Wi-Fi dropping); uploads fail with "disk full"; grace = ms
                                 before a phone that lost its connection counts as gone (8000)
+                                {upCutAfter, upCutCount} cut the next upCutCount upload parts after upCutAfter bytes;
+                                {upFullAfter} the disk fills up after that many more uploaded bytes;
+                                {partIdle} ms without progress before a partial upload is deleted (1 hour)
       POST /api/test/release    {version, notes, size, quick, uac, badSum, stall, bps, building, quiet}   a fake GitHub
                                 release; {} = none. building: the installer isn't attached yet (CI still running).
                                 quiet: don't check for it now (PhoneDrop finds it on its next check or when installing)
@@ -62,12 +65,28 @@ const NETS = {
   none: { ifaces: [], route: '', ssid: {} },
 };
 
-function freshStats() { return { requests: 0, downloads: 0, bytesSent: 0, cut: 0, ranges: 0, closedEarly: 0, uploads: 0 }; }
+function freshStats() { return { requests: 0, downloads: 0, bytesSent: 0, cut: 0, ranges: 0, closedEarly: 0, uploads: 0, upBytes: 0, upCut: 0 }; }
 
 // the state server.js reads (T); server.js calls attach() once everything exists
 const T = {
   net: null, throttle: 0, cut: null, diskFull: false, grace: 8000, release: null, stats: freshStats(), S: null,
+  upCut: null, upFull: 0, partIdle: 3600000,
   attach(S) { T.S = S; },
+};
+
+// the counters, + partial uploads waiting in the shared folder
+function stats() { return Object.assign({ partials: fs.readdirSync(T.S.DIR).filter((n) => n.startsWith('.up-')).length }, T.stats); }
+// uploads in parts: count the bytes, and cut a request part way (like Wi-Fi dropping) or fill up the disk
+T.upData = function (req, n) {
+  T.stats.upBytes += n;
+  req.got = (req.got || 0) + n;
+  if (T.upFull > 0 && (T.upFull -= n) <= 0) { T.upFull = 0; return 'full'; }
+  if (T.upCut && !req.cut && req.got > T.upCut.after) {
+    req.cut = true; T.stats.upCut++;
+    if (--T.upCut.count <= 0) T.upCut = null;
+    return 'cut';
+  }
+  return null;
 };
 
 // ---------- request log + download shaping ----------
@@ -240,8 +259,8 @@ T.route = async function (req, res, p) {
   switch (p) {
     case '/api/test': return out(200, { net: T.net ? T.net.preset : 'real', presets: ['real'].concat(Object.keys(NETS)), throttle: T.throttle, cut: T.cut,
       diskFull: T.diskFull, grace: T.grace, release: T.release, phones: S.devList(), paired: S.phoneList(), requests: S.requestList(), pair: S.pairInfo(),
-      stats: T.stats, version: S.VERSION, data: S.BASE, pid: process.pid });
-    case '/api/test/stats': return out(200, T.stats);
+      stats: stats(), version: S.VERSION, data: S.BASE, pid: process.pid });
+    case '/api/test/stats': return out(200, stats());
     case '/api/test/net': {
       if (b.preset && b.preset !== 'real' && !NETS[b.preset]) return out(400, { error: 'unknown preset', presets: ['real'].concat(Object.keys(NETS)) });
       T.net = !b.preset || b.preset === 'real' ? null : Object.assign({ preset: b.preset }, NETS[b.preset]);
@@ -272,7 +291,10 @@ T.route = async function (req, res, p) {
       if ('cutAfter' in b || 'cutCount' in b) T.cut = Number(b.cutCount) > 0 ? { after: Number(b.cutAfter) || 0, count: Number(b.cutCount) } : null;
       if ('diskFull' in b) T.diskFull = !!b.diskFull;
       if ('grace' in b) T.grace = Number(b.grace) || 8000;
-      return out(200, { cut: T.cut, diskFull: T.diskFull, grace: T.grace });
+      if ('upCutAfter' in b || 'upCutCount' in b) T.upCut = Number(b.upCutCount) > 0 ? { after: Number(b.upCutAfter) || 0, count: Number(b.upCutCount) } : null;
+      if ('upFullAfter' in b) T.upFull = Math.max(0, Number(b.upFullAfter) || 0);
+      if ('partIdle' in b) T.partIdle = Math.max(100, Number(b.partIdle) || 3600000);
+      return out(200, { cut: T.cut, diskFull: T.diskFull, grace: T.grace, upCut: T.upCut, upFull: T.upFull, partIdle: T.partIdle });
     case '/api/test/release':
       if (b.version && !/^\d+\.\d+\.\d+$/.test(b.version)) return out(400, { error: 'version must look like 1.2.3' });
       T.release = b.version ? Object.assign({ size: 3 * 1048576, uac: 'yes' }, b) : null;
@@ -282,6 +304,8 @@ T.route = async function (req, res, p) {
     case '/api/test/quit': out(200, { ok: true }); return setTimeout(() => process.exit(0), 100);
     case '/api/test/reset':
       T.net = null; T.throttle = 0; T.cut = null; T.diskFull = false; T.grace = 8000; T.release = null; T.stats = freshStats();
+      T.upCut = null; T.upFull = 0; T.partIdle = 3600000;
+      for (const n of fs.readdirSync(S.DIR)) if (n.startsWith('.up-')) fs.rmSync(path.join(S.DIR, n), { force: true });
       S.resetUpdate(); S.removeFakePhone(null); S.clearRequests(); S.clearAll(); await S.watchNet(true);
       return out(200, { ok: true });
   }

@@ -242,9 +242,9 @@ test('phone → PC: Android sends a photo, the PC downloads it, both show it as 
   await closeAll();
 });
 
-test('phone → PC: the Wi-Fi drops while sending, it sends again by itself (once, intact)', async () => {
+test('phone → PC: the Wi-Fi drops while sending, it carries on by itself (once, intact)', async () => {
   await reset();
-  const an = await open('android');
+  const an = await open('android', { init: watchUp });
   const cdp = await an.context().newCDPSession(an);
   await cdp.send('Network.enable');
   await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: 1048576 });
@@ -261,6 +261,9 @@ test('phone → PC: the Wi-Fi drops while sending, it sends again by itself (onc
   assert.deepEqual(list.map((f) => f.name), ['video.mp4'], 'once, no half copy');
   assert.equal(shaOf('video.mp4'), sha(fs.readFileSync(tmp)));
   await an.waitForFunction(() => /Sent 1 file/.test(document.getElementById('upT').textContent), null, { timeout: 10000 });
+  const shown = await an.evaluate(() => window.__upS);
+  assert.ok(shown.includes('Reconnecting… · carries on where it stopped'), 'said it was reconnecting: ' + JSON.stringify(shown));
+  assert.ok((await stats()).upBytes < 3 * 1048576 * 1.25, 'carried on instead of sending it all again');
   await closeAll();
 });
 
@@ -790,5 +793,121 @@ test('folders: a subfolder the browser can’t read is left out and the question
   await sleep(800);
   assert.equal(await pc.$eval('#up', (e) => e.hidden), true);
   assert.deepEqual(await names(), []);
+  await closeAll();
+});
+
+// a phone page that writes down every line the upload panel shows (to see "Reconnecting…" go by)
+const watchUp = () => document.addEventListener('DOMContentLoaded', () => {
+  window.__upS = [];
+  new MutationObserver(() => { const t = document.getElementById('upS').textContent; if (t && window.__upS[window.__upS.length - 1] !== t) window.__upS.push(t); })
+    .observe(document.getElementById('up'), { subtree: true, childList: true, characterData: true });
+});
+const tmpFile = (name, bytes) => { const f = path.join(tmpDir('send'), name); fs.writeFileSync(f, randomFile(bytes)); return f; };
+
+test('phone → PC: an upload cut off 8 times carries on where it stopped, byte-identical, no starting over', async () => {
+  await reset();
+  const file = tmpFile('VID_2001.mp4', 30 * 1048576 + 7), size = fs.statSync(file).size;
+  await s.api('/api/test/faults', { upCutAfter: 2 * 1048576, upCutCount: 8 });
+  const an = await open('android');
+  await an.setInputFiles('#pickPhone', file);
+  await waitFor(async () => (await s.api('/api/files')).body.length === 1, 30000, 'the video arrives');
+  const st = await stats();
+  assert.equal(st.upCut, 8, '8 parts were cut off');
+  assert.ok(st.upBytes < size * 1.25, 'sent ' + st.upBytes + ' bytes for ' + size + ' (starting over would be ~' + 8 * size / 2 + ')');
+  assert.equal(shaOf('VID_2001.mp4'), sha(fs.readFileSync(file)));
+  assert.equal(st.partials, 0);
+  await an.waitForFunction(() => /Sent 1 file/.test(document.getElementById('upT').textContent), null, { timeout: 10000 });
+  await closeAll();
+});
+
+test('phone → PC: the page reloads mid-upload; picking the same file again carries on instead of starting over', async () => {
+  await reset();
+  const file = tmpFile('IMG_3001.MOV', 40 * 1048576), size = fs.statSync(file).size;
+  const an = await open('android');
+  const cdp = await an.context().newCDPSession(an);
+  await cdp.send('Network.enable');
+  await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: 8 * 1048576 });
+  await an.setInputFiles('#pickPhone', file);
+  await waitFor(async () => (await stats()).upBytes > 16 * 1048576, 20000, '16 MB sent');
+  await an.reload(); // iOS does this to a page in the background
+  await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  await an.waitForSelector('#dock:not([hidden])');
+  await an.setInputFiles('#pickPhone', file); // the same video, picked again
+  await waitFor(async () => (await s.api('/api/files')).body.length === 1, 30000, 'the video arrives');
+  const st = await stats();
+  assert.ok(st.upBytes < size * 1.25, 'sent ' + st.upBytes + ' bytes for ' + size + ' (starting over would be > ' + 1.4 * size + ')');
+  assert.deepEqual((await s.api('/api/files')).body.map((f) => f.name), ['IMG_3001.MOV'], 'one copy');
+  assert.equal(shaOf('IMG_3001.MOV'), sha(fs.readFileSync(file)));
+  // and once it has arrived, picking it yet again doesn't send it twice
+  await an.setInputFiles('#pickPhone', file);
+  await an.waitForFunction(() => /Sent 1 file/.test(document.getElementById('upT').textContent), null, { timeout: 10000 });
+  await sleep(500);
+  assert.equal((await s.api('/api/files')).body.length, 1);
+  await closeAll();
+});
+
+test('phone → PC: the screen stays on while sending (wake lock); without one it asks you to keep it on', async () => {
+  await reset();
+  // a wake lock that records what happens to it
+  const lock = () => { window.__lock = { asked: 0, released: 0 }; Object.defineProperty(navigator, 'wakeLock', { value: { request: () => { window.__lock.asked++; const l = new EventTarget(); l.release = () => { window.__lock.released++; return Promise.resolve(); }; return Promise.resolve(l); } } }); };
+  const slow = async (page) => {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Network.enable');
+    await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: 4 * 1048576 });
+  };
+  let an = await open('android', { init: lock });
+  await slow(an);
+  await an.setInputFiles('#pickPhone', tmpFile('a.mov', 6 * 1048576));
+  await an.waitForFunction(() => /Sending to computer/.test(document.getElementById('upT').textContent));
+  await waitFor(() => an.evaluate(() => window.__lock.asked === 1), 3000, 'the wake lock');
+  assert.equal(await an.$eval('#upHint', (e) => e.hidden), true, 'no need to ask');
+  await an.waitForFunction(() => /Sent 1 file/.test(document.getElementById('upT').textContent), null, { timeout: 20000 });
+  assert.equal(await an.evaluate(() => window.__lock.released), 1, 'let go when it’s done');
+  await closeAll();
+  // no wake lock (the http link, older phones): the hint
+  await reset();
+  an = await open('android', { init: () => { Object.defineProperty(navigator, 'wakeLock', { value: undefined }); } });
+  await slow(an);
+  await an.setInputFiles('#pickPhone', tmpFile('b.mov', 6 * 1048576));
+  await an.waitForSelector('#upHint:not([hidden])');
+  assert.equal(await text(an, '#upHint'), 'Keep this screen on until it finishes');
+  await an.waitForFunction(() => /Sent 1 file/.test(document.getElementById('upT').textContent), null, { timeout: 20000 });
+  assert.equal(await an.$eval('#upHint', (e) => e.hidden), true);
+  await closeAll();
+});
+
+test('phone → PC: offline too long says it didn’t finish; Try again carries on from what arrived', async () => {
+  await reset();
+  const file = tmpFile('long.mp4', 20 * 1048576), size = fs.statSync(file).size;
+  const an = await open('android', { init: () => { window.PD_RETRY = [50, 50, 50, 50, 50, 50]; } });
+  const cdp = await an.context().newCDPSession(an);
+  await cdp.send('Network.enable');
+  await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: 4 * 1048576 });
+  await an.setInputFiles('#pickPhone', file);
+  await waitFor(async () => (await stats()).upBytes > 8 * 1048576, 20000, '8 MB sent');
+  await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  await an.waitForSelector('#upGo:not([hidden])', { timeout: 15000 });
+  assert.match(await text(an, '#upT'), /0 sent · 1 file didn’t finish/);
+  assert.match(await text(an, '#upS'), /What arrived is kept/);
+  await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  await an.click('#upGo');
+  await waitFor(async () => (await s.api('/api/files')).body.length === 1, 20000, 'the video arrives');
+  assert.ok((await stats()).upBytes < size * 1.25, 'carried on, didn’t start over');
+  assert.equal(shaOf('long.mp4'), sha(fs.readFileSync(file)));
+  await closeAll();
+});
+
+test('phone → PC: the computer’s disk fills up part way: says so straight away, no retrying, nothing left over', async () => {
+  await reset();
+  await s.api('/api/test/faults', { upFullAfter: 3 * 1048576 });
+  const an = await open('android');
+  await an.setInputFiles('#pickPhone', tmpFile('big.mov', 12 * 1048576));
+  await waitFor(async () => /disk is full/.test(await text(an, '#toast')), 15000, 'the disk full toast');
+  await an.waitForFunction(() => /0 sent · 1 failed/.test(document.getElementById('upT').textContent), null, { timeout: 10000 });
+  assert.equal(await an.$eval('#upGo', (e) => e.hidden), true, 'no Try again for a full disk');
+  const st = await stats();
+  assert.equal(st.partials, 0);
+  assert.ok(st.upBytes < 9 * 1048576, 'stopped, no retries: ' + st.upBytes);
+  assert.deepEqual((await s.api('/api/files')).body, []);
   await closeAll();
 });
