@@ -68,13 +68,9 @@ This makes `dist/PhoneDrop.exe` (the app, with Node.js built in), `dist/PhoneDro
 
 ## Releasing a new version
 
-Nothing is built when you push to `main`. To publish a version:
+**Automatic:** change `"version"` in `package.json` to a higher number (like `1.2.0`) and push to `main`. GitHub Actions makes the release **PhoneDrop 1.2.0** by itself: its notes list the commits since the last release, it builds `PhoneDrop-Setup.exe` and the quick update, attaches them and publishes it (a few minutes). Installed copies of PhoneDrop then offer the update. It also checks every hour, so a run that failed half way is finished later. Pushes that don't change the version release nothing. You can edit the notes on GitHub afterwards: the app's "What's new" shows them.
 
-1. On GitHub: **Releases → Draft a new release**.
-2. **Choose a tag** → type a new version higher than the last, like `v1.0.1` → **Create new tag on publish**.
-3. Write what's new (or click **Generate release notes**) → **Publish release**.
-
-A few minutes later GitHub Actions attaches `PhoneDrop-Setup.exe` and the quick update to the release, and installed copies of PhoneDrop offer the update. Tick **Set as a pre-release** for a test build: it gets an installer too, but nobody's PhoneDrop updates to it automatically.
+**By hand** (still works): **Releases → Draft a new release** → **Choose a tag** → a new version like `v1.0.1` → write what's new → **Publish release**. Tick **Set as a pre-release** for a test build: it gets an installer too, but nobody's PhoneDrop updates to it automatically.
 
 ## Project layout
 

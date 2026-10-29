@@ -1,51 +1,135 @@
-# Builds PhoneDrop-Setup.exe when you publish a release on GitHub, and attaches it to that release.
-# Pushing to main builds nothing.
+# Releases PhoneDrop: builds PhoneDrop-Setup.exe and the quick update and attaches them to a GitHub release.
 #
-# To release a new version:
-#   1. github.com/dhairyakhetan/PhoneDrop -> Releases -> Draft a new release
-#   2. "Choose a tag" -> type a new one, higher than the last, like v1.0.1 -> "Create new tag on publish"
-#   3. Write what's new (or click "Generate release notes") -> Publish release
-#   About 3 minutes later PhoneDrop-Setup.exe is on the release, and installed copies of PhoneDrop
-#   show "Update available" (they check at start and every 6 hours).
-#   It also gets PhoneDrop-app-<base>.json.gz: the quick update (just the app files, ~100 KB, no installer).
-#   Installed copies built from the same Node version and installer take that; others get PhoneDrop-Setup.exe.
+# Automatic: bump "version" in package.json on main (say 1.1.1 -> 1.2.0) and push. This workflow sees that
+# v1.2.0 isn't released yet, makes a draft release "PhoneDrop 1.2.0" whose notes list the commits since the last
+# release, builds the installer, attaches it and publishes the release. It runs on every push that changes
+# package.json (or this file), every hour as a safety net (a run that died half way is finished by the next one:
+# it carries on with the draft), and from Actions -> Release -> Run workflow. A version that's already out, or
+# isn't newer than the newest stable release, does nothing. Pushes that don't change the version build nothing.
+# The release is only published once the installer is on it, so nobody ever downloads a release without one.
 #
-# Tick "Set as a pre-release" for a test build: it gets an installer too, but installed copies don't update
-# to it and this link keeps giving the newest stable installer:
+# By hand, as before: Releases -> Draft a new release -> new tag like v1.0.1 -> write what's new -> Publish.
+# This builds the installer for it. (A release this workflow publishes itself doesn't start it a second time:
+# GitHub doesn't run workflows for things a workflow's own token does.)
+#
+# Either way, about 3 minutes later PhoneDrop-Setup.exe is on the release, and installed copies of PhoneDrop show
+# "Update available" (they check at start and every 6 hours). It also gets PhoneDrop-app-<base>.json.gz: the quick
+# update (just the app files, ~100 KB, no installer). Installed copies built from the same Node version and
+# installer take that; others get PhoneDrop-Setup.exe. You can edit the release notes on GitHub afterwards: the
+# app's "What's new" shows what's above <!-- install -->.
+#
+# Tick "Set as a pre-release" (by hand) for a test build: it gets an installer too, but installed copies don't
+# update to it and this link keeps giving the newest stable installer:
 #   https://github.com/dhairyakhetan/PhoneDrop/releases/latest/download/PhoneDrop-Setup.exe
 #
-# Build failed because of a network hiccup? Actions -> the failed run -> Re-run jobs.
-# Failed because of the code? Fix it on main, delete the release and its tag, and publish it again.
+# Build failed because of a network hiccup? Actions -> the failed run -> Re-run jobs (or wait for the next hour).
+# Failed because of the code? A draft remembers its commit: delete the draft (Releases -> the draft -> Delete), fix
+# the code on main and push; the next run makes the release again from the fix.
 
 name: Release
 
 on:
   release:
-    types: [published]
+    types: [published] # a release published by hand
+  push:
+    branches: [main]
+    paths: [package.json, .github/workflows/release.yml]
+  schedule:
+    - cron: '23 * * * *' # every hour
+  workflow_dispatch:
 
 permissions:
-  contents: write # attach files to the release
+  contents: write # make releases and attach files to them
 
 concurrency:
-  group: release-${{ github.event.release.tag_name }}
+  group: release # one at a time, so two runs never make the same release
   cancel-in-progress: false
 
 env:
-  TAG: ${{ github.event.release.tag_name }}
-  PRERELEASE: ${{ github.event.release.prerelease }}
   # windows-latest doesn't include NSIS (the installer maker) any more, and Chocolatey's feed timed out on the
   # first run, so use the official portable zip, checked against its SHA-256.
   NSIS: '3.11'
   NSIS_SHA256: c7d27f780ddb6cffb4730138cd1591e841f4b7edb155856901cdf5f214394fa1
 
 jobs:
+  # which release to build: the one published by hand, or v<package.json version> if that's new (made as a draft)
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.p.outputs.tag }}
+      ref: ${{ steps.p.outputs.ref }}
+      build: ${{ steps.p.outputs.build }}
+      auto: ${{ steps.p.outputs.auto }}
+      prerelease: ${{ steps.p.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # every commit and tag: the notes list the commits since the last release
+      - id: p
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REL_TAG: ${{ github.event.release.tag_name }}
+          REL_PRE: ${{ github.event.release.prerelease }}
+        run: |
+          out() { echo "$1=$2" >> "$GITHUB_OUTPUT"; }
+          if [ "$EVENT" = release ]; then
+            out tag "$REL_TAG"; out ref "$REL_TAG"; out build true; out auto false; out prerelease "$REL_PRE"
+            exit 0
+          fi
+          v=$(node -p "require('./package.json').version")
+          tag="v$v"
+          if ! [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::package.json's version must look like 1.2.3 (three numbers), not '$v'."
+            exit 1
+          fi
+          out tag "$tag"; out auto true; out prerelease false
+          # already there? Published: nothing to do. A draft: a run that didn't finish, so carry on with it.
+          if state=$(gh release view "$tag" --json isDraft,targetCommitish --jq '"\(.isDraft) \(.targetCommitish)"' 2>/dev/null); then
+            if [ "${state%% *}" = true ]; then
+              echo "Finishing the draft release $tag"
+              out ref "${state#* }"; out build true
+            else
+              echo "$tag is out already. To release, bump the version in package.json."
+              out build false
+            fi
+            exit 0
+          fi
+          # only a version newer than the newest stable release (an older one would never reach anyone)
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)
+          if [ -n "$latest" ] && ! node -e '
+            const a = process.argv[1].split(".").map(Number), b = process.argv[2].replace(/^v/, "").split(".").map(Number);
+            for (let i = 0; i < 3; i++) if (a[i] !== b[i]) process.exit(a[i] > b[i] ? 0 : 1);
+            process.exit(1);' "$v" "$latest"; then
+            echo "::warning::package.json says $v, which isn't newer than $latest, so it isn't released. Bump the version."
+            out build false
+            exit 0
+          fi
+          # what's new: the commits since the last release (without housekeeping ones). Edit it on GitHub if you like.
+          {
+            echo "## What's new"
+            echo
+            git log --no-merges --pretty='- %s' "${latest:+$latest..}HEAD" | grep -viE '^- (ci|docs?|document|tests?)\b' || true
+          } > notes.md
+          cat notes.md
+          gh release create "$tag" --draft --target "$GITHUB_SHA" --title "PhoneDrop $v" --notes-file notes.md
+          out ref "$GITHUB_SHA"; out build true
+
   installer:
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
     runs-on: windows-latest
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4 # the commit the release's tag points at
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.ref }} # the release's commit
+          fetch-depth: 1
 
       - uses: actions/setup-node@v4
         with:
@@ -110,3 +194,10 @@ jobs:
             } >> dist/notes.md
             gh release edit "$TAG" --notes-file dist/notes.md
           fi
+
+      # made by this workflow: it was a draft until now, so nobody saw a release without its installer
+      - name: Publish the release
+        if: needs.prepare.outputs.auto == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$TAG" --draft=false --latest

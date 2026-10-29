@@ -5,7 +5,7 @@ Instructions and reference for working on this repo with Claude Code. Read this 
 ## Talking to the owner
 
 - **Start every response with the owner's name: "DHAIRYA".** The owner asked for this explicitly and wants it remembered. It applies to every reply, in every session.
-- **Work on `main` and push straight to `main`** (no feature branches, no PRs) until the owner says otherwise. Pushing to `main` builds nothing; releases only happen when the owner publishes one (see **Releasing**).
+- **Work on `main` and push straight to `main`** (no feature branches, no PRs) until the owner says otherwise. Pushing to `main` releases nothing unless `package.json`'s `version` is new: **bumping the version and pushing publishes that release** (installer built, installed copies update to it). So only bump it when the owner wants a release (see **Releasing**).
 
 ## What PhoneDrop is
 
@@ -27,7 +27,7 @@ Main users: people **without the Apple-only route (AirDrop)**: Windows laptops w
 - **No CDNs / internet at runtime.** The phone is on a LAN and may have no internet. Everything (QR code, icons, page) is served by `server.js`.
 - **The page is one self-contained file**: `public/index.html` (HTML + `<style>` + one `<script>`). No framework, no bundler. The script is written in plain ES5-style JS (`var`, `function`, no optional chaining) so older iOS Safari keeps working — keep that style.
 - **Never re-encode user files.** Uploads are streamed to disk byte-for-byte; downloads/shares send the original bytes. This is what keeps photo metadata intact. Verify with SHA-256 when touching the transfer path.
-- **No `.exe` or build output in git** (`dist/`, `.cache/`, `node_modules/`, `*.exe` are gitignored). The installer is built by CI (`.github/workflows/release.yml`) only when a GitHub release is published, never on a plain push.
+- **No `.exe` or build output in git** (`dist/`, `.cache/`, `node_modules/`, `*.exe` are gitignored). The installer is built by CI (`.github/workflows/release.yml`) only for a release: a new `version` in `package.json` (automatic) or a release published by hand; never on a plain push.
 - If you add a file that `server.js` reads, read it through `asset()` **and** add it to `ASSETS` in `scripts/quick-update.js`, or the .exe will crash (a test checks this).
 - **Run `npm test` before pushing** (about 3 minutes; see **Testing**). Add a test for every bug fixed and every feature added.
 
@@ -53,7 +53,7 @@ installer/finish-setup.ps1  the one admin step: firewall rule for PhoneDrop.exe 
 scripts/build.mjs         builds dist/PhoneDrop.exe + dist/PhoneDrop-Setup.exe + the quick update
 scripts/quick-update.js   ASSETS (files server.js reads), what a quick update contains, its `base` fingerprint
 package.json              version for dev runs/local builds (CI overwrites it with the release tag); "repository" = update source
-.github/workflows/release.yml  CI: when a release is published, builds the installer and attaches it to that release
+.github/workflows/release.yml  CI: releases v<package.json version> when it's new (also hourly), and builds the installer for every release
 .github/release-notes.md  install help appended to each release's notes, below an <!-- install --> marker
 ```
 
@@ -263,10 +263,12 @@ Silent mode (`/S`, used by the in-app updater): no pages; `.onInit` reads `HKCU\
 
 ## Releasing (`.github/workflows/release.yml`)
 
-**Nothing is built on a push to `main`.** The workflow runs on `release: published`:
-1. The owner creates a release on GitHub (Releases → Draft a new release → new tag like `v1.0.1` → Publish). The release tag is the version: it must be `vMAJOR.MINOR.PATCH` (three numbers, no suffix, because Windows version resources need numbers); anything else fails the job with a clear error. If `package.json` differs, the job warns and builds the tag's version anyway (`npm version <tag> --no-git-tag-version`, not committed).
-2. On `windows-latest` (bash): checkout of the tagged commit → Node 22 → `npm ci` → NSIS 3.11 from the official portable zip (SourceForge, pinned SHA-256; the runner image no longer has NSIS and Chocolatey's feed timed out on the very first run) → `npm run build` → `.sha256` files for the installer and the quick update.
+**`package.json`'s `version` drives releases.** The workflow runs on a push to `main` that changes `package.json` (or the workflow), **every hour** (cron `23 * * * *`, a safety net), from Actions → Release → Run workflow, and on `release: published` (a release made by hand). One run at a time (`concurrency: release`).
+1. Job `prepare` (ubuntu): a hand-made release → build that tag. Otherwise `v<version>`: must be `MAJOR.MINOR.PATCH` (Windows version resources need numbers). Already published → nothing. A **draft** of it → a run that didn't finish: build it again from the draft's commit (`targetCommitish`). Not newer than the newest stable release (`/releases/latest`) → a warning, nothing. Else `gh release create v<version> --draft --target <sha> --title "PhoneDrop <version>"` with notes "## What's new" + the commit subjects since the last release (`git log --no-merges latest..HEAD`, without ones starting with CI/Docs/Document/Test: name housekeeping commits that way). Releases by hand: the tag is the version; if `package.json` differs, the job warns and builds the tag's version anyway (`npm version <tag> --no-git-tag-version`, not committed).
+2. On `windows-latest` (bash): checkout of the release's commit → Node 22 → `npm ci` → NSIS 3.11 from the official portable zip (SourceForge, pinned SHA-256; the runner image no longer has NSIS and Chocolatey's feed timed out on the very first run) → `npm run build` → `.sha256` files for the installer and the quick update.
 3. `gh release upload <tag>` the installer, the quick update `PhoneDrop-app-<base>.json.gz` and their `.sha256` files (`--clobber`), then appends `<!-- install -->` + `.github/release-notes.md` + "Built from <commit>" to the release notes (only once, so re-running the job is safe; pre-releases also get a "test version" line).
+4. An automatic release is then published (`gh release edit --draft=false --latest`). Until then it's a draft: invisible to `/releases/latest`, the README link and installed apps, so nobody gets a release without its installer. Publishing with the workflow's own token doesn't trigger `release: published` again (GitHub doesn't start workflows for its own token's events), so it isn't built twice.
+- Checked by running the `prepare` script locally with a pretend `gh` (new version → draft + notes; published → nothing; draft → resume; older than latest → nothing; a hand-made release → build it). GitHub turns off scheduled runs in a repo with no activity for 60 days (pushes count); the push trigger doesn't depend on it.
 
 **Stable vs test:** a normal release becomes GitHub's "latest": the README download link (`/releases/latest/download/PhoneDrop-Setup.exe`) and installed apps follow it. "Set as a pre-release" builds an installer too, but neither the link nor the in-app updater sees it. Older releases are kept (nothing is deleted).
 
@@ -304,9 +306,9 @@ Repo: `dhairyakhetan/PhoneDrop`, default branch `main`. Kept for reference:
 - Replace `YOUR-USERNAME` in `README.md` with the real GitHub username, and add `"repository": "github:<owner>/phonedrop"` to `package.json`.
 - `package-lock.json` is committed so CI can use `npm ci`.
 
-### 1. CI: build the installer and publish it on GitHub — done (now release-triggered)
+### 1. CI: build the installer and publish it on GitHub — done (now package.json-driven)
 
-First built on every push to `main` (version `MAJOR.MINOR.<run number>`, older releases deleted). The owner then asked for builds and updates **only after a stable release**, so the workflow now runs when a GitHub release is published (see **Releasing**). The first push-triggered run failed (NSIS missing, Chocolatey 504), so no release was ever published by it.
+First built on every push to `main` (version `MAJOR.MINOR.<run number>`, older releases deleted). The owner then asked for builds and updates **only after a stable release**, so the workflow ran when a GitHub release was published. The first push-triggered run failed (NSIS missing, Chocolatey 504), so no release was ever published by it. Then the owner asked for releases made automatically from `package.json`'s version (with a cron job): see **Releasing**. The first one was v1.1.1.
 
 ### 2. In-app updates ("Update available" banner) — done
 
